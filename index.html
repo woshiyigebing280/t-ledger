@@ -420,9 +420,51 @@ body {
     <div class="scroll animate-in" id="detail-scroll">
       <div id="detail-content"></div>
     </div>
-    <button class="fab" onclick="openAddTradeModal()" aria-label="记录T">T</button>
+    <button class="fab" onclick="openDetailFab()" aria-label="记录操作">＋</button>
   </div>
 
+</div>
+
+<!-- ══ MODAL: 加仓 ═══════════════════════ -->
+<div class="modal-overlay" id="modal-buy">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">加仓（买入）</div>
+    <div class="modal-subtitle" id="buy-modal-subtitle"></div>
+    <div class="form">
+      <div class="form-group">
+        <label class="form-label">日期</label>
+        <input class="form-input" id="buy-date" type="date">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">买入价（元）</label>
+          <input class="form-input" id="buy-price" type="number" placeholder="1480.00" inputmode="decimal" step="0.001" oninput="updateBuyCalc()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">买入股数（股）</label>
+          <input class="form-input" id="buy-qty" type="number" placeholder="100" inputmode="numeric" step="100" oninput="updateBuyCalc()">
+        </div>
+      </div>
+      <div class="calc-preview" id="buy-calc" style="display:none">
+        <div class="calc-row">
+          <span class="calc-label">新持仓股数</span>
+          <span class="calc-val" id="buy-calc-shares">—</span>
+        </div>
+        <div class="calc-row">
+          <span class="calc-label">成本变化</span>
+          <span class="calc-val" id="buy-calc-cost-change">—</span>
+        </div>
+        <div class="calc-divider"></div>
+        <div class="calc-row">
+          <span class="calc-total-label">新成本价</span>
+          <span class="calc-total-val" id="buy-calc-new-cost">—</span>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveBuy()">记录加仓</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-buy')">取消</button>
+    </div>
+  </div>
 </div>
 
 <!-- ══ MODAL: 添加/编辑持仓 ═══════════════ -->
@@ -593,7 +635,7 @@ function renderHome() {
 
   // Summary
   const totalProfit = stocks.reduce((s, st) => s + (st.totalTProfit || 0), 0);
-  const totalTrades = stocks.reduce((s, st) => s + (st.trades || []).length, 0);
+  const totalTrades = stocks.reduce((s, st) => s + (st.trades || []).filter(t => !t.type || t.type === 't').length, 0);
   const totalStocks = stocks.length;
   const pc = profitClass(totalProfit);
 
@@ -637,7 +679,7 @@ function renderHome() {
           </div>
           <div class="card-row2">
             <span class="card-sub">${fmt(st.shares, 0)} 股 · 成本 ¥${fmt(st.avgCost)}</span>
-            <span class="card-profit-label">${(st.trades||[]).length} 次T</span>
+            <span class="card-profit-label">${(st.trades||[]).filter(t=>!t.type||t.type==='t').length} 次T</span>
           </div>
         </div>
         <svg class="card-arrow" width="7" height="12" viewBox="0 0 7 12" fill="currentColor"><path d="M1 1l5 5-5 5"/></svg>
@@ -660,14 +702,15 @@ function renderDetail(stockId) {
   const pc = profitClass(profit);
   const color = stockColor(stockId);
   const trades = (st.trades || []).slice().reverse();
+  const tCount = trades.filter(t => !t.type || t.type === 't').length;
 
   const tradeRows = trades.length === 0
     ? `<div class="empty" style="padding:40px 32px">
         <div class="empty-icon">📝</div>
-        <div class="empty-title">还没有 T 操作记录</div>
-        <div class="empty-sub">点击右下角按钮记录第一次 T</div>
+        <div class="empty-title">还没有操作记录</div>
+        <div class="empty-sub">点击右下角 ＋ 记录 T 操作或加仓</div>
        </div>`
-    : `<div class="section-header">T 操作记录（${trades.length}次）</div>
+    : `<div class="section-header">操作记录（T×${tCount}）</div>
        <div class="card-list">
          ${trades.map((tr, i) => tradeRow(tr, i, trades.length)).join('')}
        </div>`;
@@ -678,7 +721,7 @@ function renderDetail(stockId) {
         <div class="detail-hero-icon ${color}">${stockInitials(st)}</div>
         <div>
           <div class="detail-hero-name">${st.name}</div>
-          <div class="detail-hero-code">${st.code || '未设置代码'} · ${(st.trades||[]).length} 次 T</div>
+          <div class="detail-hero-code">${st.code || '未设置代码'} · T×${(st.trades||[]).filter(t=>!t.type||t.type==='t').length}</div>
         </div>
       </div>
       <div class="detail-stats">
@@ -700,16 +743,33 @@ function renderDetail(stockId) {
     <div style="height:80px"></div>`;
 }
 
-function tradeRow(tr, i, total) {
+function tradeRow(tr) {
+  if (tr.type === 'buy') {
+    const costDir = tr.costAfter > tr.costBefore ? 'neg' : tr.costAfter < tr.costBefore ? 'pos' : 'zero';
+    const costArrow = tr.costAfter > tr.costBefore ? '↑' : tr.costAfter < tr.costBefore ? '↓' : '→';
+    return `
+      <div class="card-item trade-item" onclick="showTradeActions('${tr.id}')">
+        <div style="flex:1">
+          <div class="trade-header">
+            <span class="trade-date">${tr.date} <span style="background:var(--orange);color:white;font-size:11px;padding:1px 6px;border-radius:4px;margin-left:4px">加仓</span></span>
+            <span class="trade-profit" style="color:var(--orange)">+${fmt(tr.qty,0)}股</span>
+          </div>
+          <div class="trade-body">
+            <span class="trade-tag">买入价 <span class="val">¥${fmt(tr.price, 3)}</span></span>
+            <span class="trade-tag">数量 <span class="val">${fmt(tr.qty,0)}股</span></span>
+          </div>
+          <div class="trade-meta">持仓 ${fmt(tr.sharesBefore,0)} → ${fmt(tr.sharesAfter,0)}股 · 成本 ¥${fmt(tr.costBefore)} <span class="${costDir}">${costArrow} ¥${fmt(tr.costAfter)}</span></div>
+        </div>
+      </div>`;
+  }
   const pc = profitClass(tr.profit);
-  const idx = total - 1 - i; // original index
   const sellVal = tr.sell !== undefined ? tr.sell : tr.sellPrice;
   const buyVal = tr.buy !== undefined ? tr.buy : tr.buyPrice;
   return `
     <div class="card-item trade-item" onclick="showTradeActions('${tr.id}')">
       <div style="flex:1">
         <div class="trade-header">
-          <span class="trade-date">${tr.date}</span>
+          <span class="trade-date">${tr.date} <span style="background:var(--accent);color:white;font-size:11px;padding:1px 6px;border-radius:4px;margin-left:4px">T</span></span>
           <span class="trade-profit ${pc}">${fmtMoney(tr.profit)}</span>
         </div>
         <div class="trade-body">
@@ -767,6 +827,67 @@ function saveStock() {
   } else {
     renderHome();
   }
+}
+
+// ─── Detail FAB ───────────────────────────────────────────────────────────────
+function openDetailFab() {
+  showActionSheet([
+    { label: '记录 T 操作（高抛低吸）', action: openAddTradeModal },
+    { label: '加仓（新买入股票）', action: openAddBuyModal },
+  ]);
+}
+
+// ─── Add Buy ──────────────────────────────────────────────────────────────────
+function openAddBuyModal() {
+  const st = state.stocks.find(s => s.id === currentStockId);
+  if (!st) return;
+  document.getElementById('buy-modal-subtitle').textContent =
+    `${st.name} · 当前 ${fmt(st.shares,0)}股 · 成本 ¥${fmt(st.avgCost)}`;
+  document.getElementById('buy-date').value = todayStr();
+  document.getElementById('buy-price').value = '';
+  document.getElementById('buy-qty').value = '';
+  document.getElementById('buy-calc').style.display = 'none';
+  openModal('modal-buy');
+}
+function updateBuyCalc() {
+  const price = parseFloat(document.getElementById('buy-price').value);
+  const qty = parseFloat(document.getElementById('buy-qty').value);
+  const st = state.stocks.find(s => s.id === currentStockId);
+  if (!st || isNaN(price) || isNaN(qty) || qty <= 0) {
+    document.getElementById('buy-calc').style.display = 'none';
+    return;
+  }
+  const newShares = st.shares + qty;
+  const newCost = (st.shares * st.avgCost + qty * price) / newShares;
+  const diff = newCost - st.avgCost;
+  document.getElementById('buy-calc').style.display = 'block';
+  document.getElementById('buy-calc-shares').textContent = `${fmt(st.shares,0)} → ${fmt(newShares,0)} 股`;
+  document.getElementById('buy-calc-cost-change').textContent =
+    (diff >= 0 ? '+' : '') + fmt(diff, 4) + ' 元/股';
+  document.getElementById('buy-calc-cost-change').className = 'calc-val ' + (diff > 0 ? 'neg' : diff < 0 ? 'pos' : 'zero');
+  document.getElementById('buy-calc-new-cost').textContent = '¥' + fmt(newCost);
+}
+function saveBuy() {
+  const st = state.stocks.find(s => s.id === currentStockId);
+  if (!st) return;
+  const date = document.getElementById('buy-date').value;
+  const price = parseFloat(document.getElementById('buy-price').value);
+  const qty = parseFloat(document.getElementById('buy-qty').value);
+  if (!date) return alert('请选择日期');
+  if (isNaN(price) || price <= 0) return alert('请填写买入价');
+  if (isNaN(qty) || qty <= 0) return alert('请填写买入股数');
+
+  const sharesBefore = st.shares;
+  const costBefore = st.avgCost;
+  const sharesAfter = st.shares + qty;
+  const costAfter = (st.shares * st.avgCost + qty * price) / sharesAfter;
+
+  st.trades.push({ id: uid(), type: 'buy', date, price, qty, sharesBefore, sharesAfter, costBefore, costAfter });
+  st.shares = sharesAfter;
+  st.avgCost = costAfter;
+  save();
+  closeModal('modal-buy');
+  renderDetail(currentStockId);
 }
 
 // ─── Add Trade ────────────────────────────────────────────────────────────────
@@ -845,10 +966,13 @@ function deleteTrade(stockId, tradeId) {
   if (!st) return;
   const tr = (st.trades || []).find(t => t.id === tradeId);
   if (!tr) return;
-  // reverse the profit effect
-  const newAvgCost = (st.shares * st.avgCost + tr.profit) / st.shares;
-  st.avgCost = newAvgCost;
-  st.totalTProfit = (st.totalTProfit || 0) - tr.profit;
+  if (tr.type === 'buy') {
+    st.shares = tr.sharesBefore;
+    st.avgCost = tr.costBefore;
+  } else {
+    st.avgCost = tr.costBefore !== undefined ? tr.costBefore : (st.shares * st.avgCost + tr.profit) / st.shares;
+    st.totalTProfit = (st.totalTProfit || 0) - tr.profit;
+  }
   st.trades = st.trades.filter(t => t.id !== tradeId);
   save();
   renderDetail(stockId);
@@ -913,9 +1037,7 @@ function closeModal(id) {
   document.getElementById(id).classList.remove('open');
 }
 document.querySelectorAll('.modal-overlay').forEach(el => {
-  el.addEventListener('click', e => {
-    if (e.target === el) closeModal(el.id);
-  });
+  el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
 });
 
 // ─── Action Sheet ─────────────────────────────────────────────────────────────
