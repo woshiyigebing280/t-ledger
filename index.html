@@ -504,9 +504,10 @@ body {
 <div class="modal-overlay" id="modal-trade">
   <div class="modal">
     <div class="modal-handle"></div>
-    <div class="modal-title">记录 T 操作</div>
+    <div class="modal-title" id="trade-modal-title">记录 T 操作</div>
     <div class="modal-subtitle" id="trade-modal-subtitle"></div>
     <div class="form">
+      <input type="hidden" id="trade-edit-id">
       <div class="form-group">
         <label class="form-label">日期</label>
         <input class="form-input" id="trade-date" type="date">
@@ -541,7 +542,7 @@ body {
           <span class="calc-total-val" id="calc-new-cost">—</span>
         </div>
       </div>
-      <button class="btn btn-primary" onclick="saveTrade()">记录</button>
+      <button class="btn btn-primary" id="trade-submit-btn" onclick="saveTrade()">记录</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-trade')">取消</button>
     </div>
   </div>
@@ -894,12 +895,30 @@ function saveBuy() {
 function openAddTradeModal() {
   const st = state.stocks.find(s => s.id === currentStockId);
   if (!st) return;
+  document.getElementById('trade-modal-title').textContent = '记录 T 操作';
+  document.getElementById('trade-submit-btn').textContent = '记录';
   document.getElementById('trade-modal-subtitle').textContent = `${st.name} · 成本 ¥${fmt(st.avgCost)} · ${fmt(st.shares, 0)}股`;
+  document.getElementById('trade-edit-id').value = '';
   document.getElementById('trade-date').value = todayStr();
   document.getElementById('trade-sell').value = '';
   document.getElementById('trade-buy').value = '';
   document.getElementById('trade-qty').value = '';
   document.getElementById('trade-calc').style.display = 'none';
+  openModal('modal-trade');
+}
+function openEditTradeModal(tradeId) {
+  const st = state.stocks.find(s => s.id === currentStockId);
+  const tr = st && (st.trades || []).find(t => t.id === tradeId);
+  if (!st || !tr) return;
+  document.getElementById('trade-modal-title').textContent = '修改 T 记录';
+  document.getElementById('trade-submit-btn').textContent = '保存修改';
+  document.getElementById('trade-modal-subtitle').textContent = `${st.name} · ${tr.date}`;
+  document.getElementById('trade-edit-id').value = tradeId;
+  document.getElementById('trade-date').value = tr.date;
+  document.getElementById('trade-sell').value = tr.sell;
+  document.getElementById('trade-buy').value = tr.buy;
+  document.getElementById('trade-qty').value = tr.qty;
+  updateTradeCalc();
   openModal('modal-trade');
 }
 function updateTradeCalc() {
@@ -911,9 +930,14 @@ function updateTradeCalc() {
     document.getElementById('trade-calc').style.display = 'none';
     return;
   }
+  // 编辑模式：用该记录的 costBefore 作为基准
+  const editId = document.getElementById('trade-edit-id').value;
+  const baseCost = editId
+    ? ((st.trades || []).find(t => t.id === editId) || {}).costBefore ?? st.avgCost
+    : st.avgCost;
   const profit = (sell - buy) * qty;
-  const newCost = (st.shares * st.avgCost - profit) / st.shares;
-  const drop = st.avgCost - newCost;
+  const newCost = (st.shares * baseCost - profit) / st.shares;
+  const drop = baseCost - newCost;
 
   document.getElementById('trade-calc').style.display = 'block';
   document.getElementById('calc-profit').textContent = fmtMoney(profit);
@@ -925,6 +949,7 @@ function updateTradeCalc() {
 function saveTrade() {
   const st = state.stocks.find(s => s.id === currentStockId);
   if (!st) return;
+  const editId = document.getElementById('trade-edit-id').value;
   const date = document.getElementById('trade-date').value;
   const sell = parseFloat(document.getElementById('trade-sell').value);
   const buy = parseFloat(document.getElementById('trade-buy').value);
@@ -938,13 +963,25 @@ function saveTrade() {
     if (!confirm(`卖出价(${sell}) ≤ 买入价(${buy})，此次T亏损，确认记录？`)) return;
   }
 
-  const profit = (sell - buy) * qty;
-  const costBefore = st.avgCost;
-  const costAfter = (st.shares * st.avgCost - profit) / st.shares;
-
-  st.trades.push({ id: uid(), date, sell, buy, qty, profit, costBefore, costAfter });
-  st.totalTProfit = (st.totalTProfit || 0) + profit;
-  st.avgCost = costAfter;
+  if (editId) {
+    // 编辑：先撤销旧记录影响，再应用新数值
+    const tr = (st.trades || []).find(t => t.id === editId);
+    if (!tr) return;
+    const costBefore = tr.costBefore;  // 该记录之前的成本（不变）
+    const newProfit = (sell - buy) * qty;
+    const newCostAfter = (st.shares * costBefore - newProfit) / st.shares;
+    st.totalTProfit = (st.totalTProfit || 0) - tr.profit + newProfit;
+    st.avgCost = newCostAfter;
+    tr.date = date; tr.sell = sell; tr.buy = buy; tr.qty = qty;
+    tr.profit = newProfit; tr.costAfter = newCostAfter;
+  } else {
+    const profit = (sell - buy) * qty;
+    const costBefore = st.avgCost;
+    const costAfter = (st.shares * st.avgCost - profit) / st.shares;
+    st.trades.push({ id: uid(), date, sell, buy, qty, profit, costBefore, costAfter });
+    st.totalTProfit = (st.totalTProfit || 0) + profit;
+    st.avgCost = costAfter;
+  }
   save();
   closeModal('modal-trade');
   renderDetail(currentStockId);
@@ -957,9 +994,12 @@ function showTradeActions(tradeId) {
   const st = state.stocks.find(s => s.id === currentStockId);
   const tr = st && (st.trades || []).find(t => t.id === tradeId);
   if (!tr) return;
-  showActionSheet([
-    { label: `删除此条记录（${tr.date}）`, danger: true, action: () => deleteTrade(currentStockId, tradeId) }
-  ]);
+  const actions = [];
+  if (!tr.type || tr.type === 't') {
+    actions.push({ label: '修改此条 T 记录', action: () => openEditTradeModal(tradeId) });
+  }
+  actions.push({ label: `删除此条记录（${tr.date}）`, danger: true, action: () => deleteTrade(currentStockId, tradeId) });
+  showActionSheet(actions);
 }
 function deleteTrade(stockId, tradeId) {
   const st = state.stocks.find(s => s.id === stockId);
