@@ -1042,15 +1042,15 @@ document.querySelectorAll('.modal-overlay').forEach(el => {
 
 // ─── Action Sheet ─────────────────────────────────────────────────────────────
 function showActionSheet(actions) {
-  const container = document.getElementById('action-sheet-actions');
-  container.innerHTML = actions.map(a => `
-    <button class="action-btn ${a.danger ? 'danger' : ''}" onclick="runAction(${JSON.stringify(a.label)})">${a.label}</button>
-  `).join('');
   window._sheetActions = actions;
+  const container = document.getElementById('action-sheet-actions');
+  container.innerHTML = actions.map((a, i) => `
+    <button class="action-btn ${a.danger ? 'danger' : ''}" onclick="runAction(${i})">${a.label}</button>
+  `).join('');
   document.getElementById('action-sheet').classList.add('open');
 }
-function runAction(label) {
-  const a = (window._sheetActions || []).find(x => x.label === label);
+function runAction(idx) {
+  const a = (window._sheetActions || [])[idx];
   closeActionSheet();
   if (a) setTimeout(a.action, 200);
 }
