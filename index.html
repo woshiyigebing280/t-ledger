@@ -1,0 +1,949 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="T账本">
+<link rel="manifest" href="manifest.json">
+<title>T账本</title>
+<style>
+:root {
+  --bg: #f2f2f7;
+  --bg2: #e5e5ea;
+  --card: #ffffff;
+  --text: #000000;
+  --text2: #6c6c70;
+  --text3: #aeaeb2;
+  --sep: rgba(60,60,67,0.12);
+  --accent: #007aff;
+  --green: #34c759;
+  --red: #ff3b30;
+  --orange: #ff9500;
+  --safe-t: env(safe-area-inset-top, 44px);
+  --safe-b: env(safe-area-inset-bottom, 34px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --radius: 12px;
+  --hdr: 52px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --bg2: #1c1c1e;
+    --card: #1c1c1e;
+    --text: #ffffff;
+    --text2: #8e8e93;
+    --text3: #48484a;
+    --sep: rgba(84,84,88,0.36);
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Layout ─────────────────────────────── */
+#app { height: 100%; display: flex; flex-direction: column; }
+
+/* ── Header ──────────────────────────────── */
+.hdr {
+  flex-shrink: 0;
+  padding-top: calc(var(--safe-t));
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid var(--sep);
+  position: relative;
+  z-index: 10;
+}
+@media (prefers-color-scheme: dark) {
+  .hdr { background: rgba(28,28,30,0.85); }
+}
+.hdr-inner {
+  height: var(--hdr);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  position: relative;
+}
+.hdr-title {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  font-size: 17px; font-weight: 600; white-space: nowrap;
+}
+.hdr-back {
+  display: flex; align-items: center; gap: 4px;
+  color: var(--accent); font-size: 17px; background: none; border: none;
+  padding: 8px 0; cursor: pointer;
+}
+.hdr-back svg { flex-shrink: 0; }
+.hdr-action {
+  margin-left: auto;
+  color: var(--accent); font-size: 17px; background: none; border: none;
+  padding: 8px 4px; cursor: pointer; font-weight: 400;
+}
+.hdr-action.icon-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg2);
+}
+
+/* ── Scroll area ─────────────────────────── */
+.scroll {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(var(--safe-b) + 16px);
+}
+
+/* ── Summary banner ──────────────────────── */
+.summary {
+  margin: 16px 16px 0;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  border-radius: 16px;
+  padding: 20px;
+  color: white;
+}
+.summary-label { font-size: 13px; opacity: 0.7; margin-bottom: 4px; }
+.summary-amount { font-size: 36px; font-weight: 700; letter-spacing: -0.5px; }
+.summary-amount.pos { color: #4ade80; }
+.summary-amount.neg { color: #f87171; }
+.summary-amount.zero { color: white; }
+.summary-stats {
+  display: flex; gap: 24px; margin-top: 16px;
+  padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.15);
+}
+.summary-stat { }
+.summary-stat-val { font-size: 18px; font-weight: 600; }
+.summary-stat-label { font-size: 12px; opacity: 0.6; margin-top: 2px; }
+
+/* ── Section ─────────────────────────────── */
+.section-header {
+  font-size: 13px; font-weight: 600; color: var(--text2);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 20px 16px 8px;
+}
+
+/* ── Card list ───────────────────────────── */
+.card-list {
+  margin: 0 16px;
+  background: var(--card);
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 0.5px solid var(--sep);
+}
+.card-item {
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+  position: relative;
+}
+.card-item:not(:last-child)::after {
+  content: '';
+  position: absolute; bottom: 0; left: 16px; right: 0;
+  height: 0.5px; background: var(--sep);
+}
+.card-item:active { background: var(--bg2); }
+.stock-icon {
+  width: 44px; height: 44px; border-radius: 12px;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 700; color: white;
+  flex-shrink: 0; letter-spacing: -0.5px;
+}
+.stock-icon.c0 { background: linear-gradient(135deg, #667eea, #764ba2); }
+.stock-icon.c1 { background: linear-gradient(135deg, #f093fb, #f5576c); }
+.stock-icon.c2 { background: linear-gradient(135deg, #4facfe, #00f2fe); }
+.stock-icon.c3 { background: linear-gradient(135deg, #43e97b, #38f9d7); }
+.stock-icon.c4 { background: linear-gradient(135deg, #fa709a, #fee140); }
+.stock-icon.c5 { background: linear-gradient(135deg, #a18cd1, #fbc2eb); }
+.card-main { flex: 1; min-width: 0; }
+.card-row1 { display: flex; justify-content: space-between; align-items: baseline; }
+.card-name { font-size: 16px; font-weight: 600; }
+.card-profit { font-size: 16px; font-weight: 600; }
+.card-row2 { display: flex; justify-content: space-between; align-items: baseline; margin-top: 3px; }
+.card-sub { font-size: 13px; color: var(--text2); }
+.card-profit-label { font-size: 12px; color: var(--text3); }
+.card-arrow { color: var(--text3); flex-shrink: 0; }
+
+.pos { color: var(--green); }
+.neg { color: var(--red); }
+.zero { color: var(--text2); }
+
+/* ── Empty state ─────────────────────────── */
+.empty {
+  text-align: center; padding: 60px 32px;
+}
+.empty-icon { font-size: 56px; margin-bottom: 16px; }
+.empty-title { font-size: 20px; font-weight: 600; margin-bottom: 8px; }
+.empty-sub { font-size: 15px; color: var(--text2); line-height: 1.5; }
+
+/* ── FAB ─────────────────────────────────── */
+.fab {
+  position: fixed;
+  right: calc(var(--safe-r) + 20px);
+  bottom: calc(var(--safe-b) + 20px);
+  width: 56px; height: 56px; border-radius: 50%;
+  background: var(--accent);
+  color: white; font-size: 28px; font-weight: 300;
+  border: none; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 20px rgba(0,122,255,0.4);
+  transition: transform 0.15s, box-shadow 0.15s;
+  z-index: 20;
+}
+.fab:active { transform: scale(0.93); box-shadow: 0 2px 10px rgba(0,122,255,0.3); }
+
+/* ── Detail header ───────────────────────── */
+.detail-hero {
+  margin: 16px;
+  background: var(--card);
+  border-radius: 16px;
+  padding: 20px;
+  border: 0.5px solid var(--sep);
+}
+.detail-hero-top {
+  display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+}
+.detail-hero-icon {
+  width: 48px; height: 48px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; color: white; flex-shrink: 0;
+}
+.detail-hero-name { font-size: 20px; font-weight: 700; }
+.detail-hero-code { font-size: 14px; color: var(--text2); margin-top: 2px; }
+.detail-stats {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  gap: 0;
+}
+.detail-stat {
+  text-align: center; padding: 4px 0;
+}
+.detail-stat:not(:last-child) {
+  border-right: 0.5px solid var(--sep);
+}
+.detail-stat-val { font-size: 17px; font-weight: 600; }
+.detail-stat-label { font-size: 12px; color: var(--text2); margin-top: 3px; }
+
+/* ── Trade record ────────────────────────── */
+.trade-item {
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.trade-item:active { background: var(--bg2); }
+.trade-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.trade-date { font-size: 13px; color: var(--text2); }
+.trade-profit { font-size: 16px; font-weight: 600; }
+.trade-body {
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+.trade-tag {
+  font-size: 13px; color: var(--text2);
+  background: var(--bg);
+  border-radius: 6px; padding: 3px 8px;
+}
+.trade-tag .val { color: var(--text); font-weight: 500; }
+.trade-meta { font-size: 12px; color: var(--text3); margin-top: 6px; }
+
+/* ── Modal ───────────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex; align-items: flex-end;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.25s;
+}
+.modal-overlay.open {
+  opacity: 1; pointer-events: all;
+}
+.modal {
+  width: 100%; background: var(--card);
+  border-radius: 20px 20px 0 0;
+  padding-bottom: calc(var(--safe-b) + 8px);
+  transform: translateY(100%);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+  max-height: 92vh;
+  overflow-y: auto;
+}
+.modal-overlay.open .modal { transform: translateY(0); }
+
+.modal-handle {
+  width: 36px; height: 4px; border-radius: 2px;
+  background: var(--text3); margin: 12px auto 4px;
+}
+.modal-title {
+  font-size: 17px; font-weight: 600;
+  text-align: center; padding: 12px 16px 4px;
+}
+.modal-subtitle {
+  text-align: center; font-size: 13px; color: var(--text2); padding-bottom: 8px;
+}
+
+/* ── Form ────────────────────────────────── */
+.form { padding: 8px 16px 16px; }
+.form-group { margin-bottom: 12px; }
+.form-label { font-size: 13px; color: var(--text2); margin-bottom: 6px; display: block; font-weight: 500; }
+.form-input {
+  width: 100%; background: var(--bg);
+  border: 1px solid var(--sep);
+  border-radius: 10px; padding: 12px 14px;
+  font-size: 16px; color: var(--text);
+  font-family: inherit; outline: none;
+  transition: border-color 0.2s;
+  -webkit-appearance: none;
+}
+.form-input:focus { border-color: var(--accent); }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.form-hint { font-size: 12px; color: var(--text3); margin-top: 4px; }
+
+.calc-preview {
+  background: var(--bg);
+  border-radius: 10px; padding: 14px;
+  margin: 4px 0 16px;
+}
+.calc-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 0;
+}
+.calc-label { font-size: 14px; color: var(--text2); }
+.calc-val { font-size: 15px; font-weight: 600; }
+.calc-divider {
+  height: 0.5px; background: var(--sep); margin: 8px 0;
+}
+.calc-total-label { font-size: 15px; font-weight: 600; }
+.calc-total-val { font-size: 18px; font-weight: 700; }
+
+.btn {
+  width: 100%; padding: 15px;
+  border-radius: 12px; border: none;
+  font-size: 17px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn:active { opacity: 0.85; transform: scale(0.98); }
+.btn-primary { background: var(--accent); color: white; }
+.btn-danger { background: var(--red); color: white; margin-top: 10px; }
+.btn-ghost { background: var(--bg2); color: var(--text); margin-top: 10px; }
+
+/* ── Delete confirm ──────────────────────── */
+.action-sheet {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s;
+}
+.action-sheet.open { opacity: 1; pointer-events: all; }
+.action-sheet-body {
+  margin: 8px;
+  padding-bottom: calc(var(--safe-b) + 8px);
+}
+.action-group {
+  background: var(--card);
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.action-btn {
+  width: 100%; padding: 16px;
+  background: none; border: none;
+  font-size: 17px; font-family: inherit;
+  cursor: pointer; color: var(--text);
+  transition: background 0.15s;
+}
+.action-btn:active { background: var(--bg2); }
+.action-btn:not(:last-child) { border-bottom: 0.5px solid var(--sep); }
+.action-btn.danger { color: var(--red); }
+.action-btn.accent { color: var(--accent); font-weight: 600; }
+
+/* ── Views ───────────────────────────────── */
+.view { display: none; flex-direction: column; height: 100%; }
+.view.active { display: flex; }
+
+/* ── Animations ──────────────────────────── */
+@keyframes slideIn {
+  from { transform: translateX(40px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.animate-in { animation: slideIn 0.22s ease-out; }
+
+/* ── Edit button ─────────────────────────── */
+.edit-btn {
+  color: var(--accent); font-size: 15px;
+  background: none; border: none; cursor: pointer;
+  padding: 4px 8px;
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ══ HOME VIEW ══════════════════════════ -->
+  <div class="view active" id="view-home">
+    <div class="hdr">
+      <div class="hdr-inner">
+        <span class="hdr-title">T 账本</span>
+        <button class="hdr-action" onclick="openEditDataModal()" title="数据管理" style="margin-left:auto;background:none;border:none;color:var(--accent);font-size:14px;cursor:pointer;">管理</button>
+      </div>
+    </div>
+    <div class="scroll" id="home-scroll">
+      <div id="home-summary"></div>
+      <div id="home-list"></div>
+    </div>
+    <button class="fab" onclick="openAddStockModal()" aria-label="添加持仓">＋</button>
+  </div>
+
+  <!-- ══ DETAIL VIEW ════════════════════════ -->
+  <div class="view" id="view-detail">
+    <div class="hdr">
+      <div class="hdr-inner">
+        <button class="hdr-back" onclick="goHome()">
+          <svg width="10" height="17" viewBox="0 0 10 17" fill="currentColor"><path d="M8.5 1L1 8.5L8.5 16"/></svg>
+          持仓
+        </button>
+        <span class="hdr-title" id="detail-hdr-title">—</span>
+        <button class="hdr-action edit-btn" onclick="openEditStockModal()">编辑</button>
+      </div>
+    </div>
+    <div class="scroll animate-in" id="detail-scroll">
+      <div id="detail-content"></div>
+    </div>
+    <button class="fab" onclick="openAddTradeModal()" aria-label="记录T">T</button>
+  </div>
+
+</div>
+
+<!-- ══ MODAL: 添加/编辑持仓 ═══════════════ -->
+<div class="modal-overlay" id="modal-stock">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="modal-stock-title">添加持仓</div>
+    <div class="form">
+      <input type="hidden" id="stock-edit-id">
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">股票代码</label>
+          <input class="form-input" id="stock-code" type="text" placeholder="600519" inputmode="numeric" maxlength="6">
+        </div>
+        <div class="form-group">
+          <label class="form-label">股票名称</label>
+          <input class="form-input" id="stock-name" type="text" placeholder="贵州茅台">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">持仓股数（股）</label>
+          <input class="form-input" id="stock-shares" type="number" placeholder="1000" inputmode="decimal" min="0">
+        </div>
+        <div class="form-group">
+          <label class="form-label">当前成本价（元）</label>
+          <input class="form-input" id="stock-cost" type="number" placeholder="1500.00" inputmode="decimal" step="0.01">
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveStock()">确认</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-stock')">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: 记录T操作 ══════════════════ -->
+<div class="modal-overlay" id="modal-trade">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">记录 T 操作</div>
+    <div class="modal-subtitle" id="trade-modal-subtitle"></div>
+    <div class="form">
+      <div class="form-group">
+        <label class="form-label">日期</label>
+        <input class="form-input" id="trade-date" type="date">
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">卖出价（元）</label>
+          <input class="form-input" id="trade-sell" type="number" placeholder="1520.00" inputmode="decimal" step="0.001" oninput="updateTradeCalc()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">买入价（元）</label>
+          <input class="form-input" id="trade-buy" type="number" placeholder="1510.00" inputmode="decimal" step="0.001" oninput="updateTradeCalc()">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">数量（股）</label>
+        <input class="form-input" id="trade-qty" type="number" placeholder="100" inputmode="numeric" step="100" oninput="updateTradeCalc()">
+        <div class="form-hint">高抛低吸同等数量，不影响总持仓</div>
+      </div>
+      <div class="calc-preview" id="trade-calc" style="display:none">
+        <div class="calc-row">
+          <span class="calc-label">T 收益</span>
+          <span class="calc-val pos" id="calc-profit">¥0</span>
+        </div>
+        <div class="calc-row">
+          <span class="calc-label">成本降幅</span>
+          <span class="calc-val pos" id="calc-cost-drop">—</span>
+        </div>
+        <div class="calc-divider"></div>
+        <div class="calc-row">
+          <span class="calc-total-label">新成本价</span>
+          <span class="calc-total-val" id="calc-new-cost">—</span>
+        </div>
+      </div>
+      <button class="btn btn-primary" onclick="saveTrade()">记录</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-trade')">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: 数据管理 ════════════════════ -->
+<div class="modal-overlay" id="modal-data">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">数据管理</div>
+    <div class="form">
+      <button class="btn btn-ghost" onclick="exportData()" style="margin-bottom:10px">导出数据 (JSON)</button>
+      <button class="btn btn-ghost" onclick="document.getElementById('import-file').click()" style="margin-bottom:10px">导入数据 (JSON)</button>
+      <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">
+      <button class="btn btn-danger" onclick="confirmClearAll()">清空所有数据</button>
+      <button class="btn btn-ghost" onclick="closeModal('modal-data')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ACTION SHEET: 操作确认 ════════════ -->
+<div class="action-sheet" id="action-sheet">
+  <div class="action-sheet-body">
+    <div class="action-group" id="action-sheet-actions"></div>
+    <div class="action-group">
+      <button class="action-btn accent" onclick="closeActionSheet()">取消</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── State ──────────────────────────────────────────────────────────────────
+const STORE_KEY = 't_ledger_v1';
+let state = load();
+let currentStockId = null;
+
+function load() {
+  try {
+    return JSON.parse(localStorage.getItem(STORE_KEY)) || { stocks: [] };
+  } catch { return { stocks: [] }; }
+}
+function save() {
+  localStorage.setItem(STORE_KEY, JSON.stringify(state));
+}
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+function fmt(n, decimals = 2) {
+  return Number(n).toFixed(decimals);
+}
+function fmtMoney(n) {
+  const abs = Math.abs(n);
+  const sign = n > 0 ? '+' : n < 0 ? '-' : '';
+  return sign + '¥' + abs.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+function profitClass(n) {
+  if (n > 0) return 'pos';
+  if (n < 0) return 'neg';
+  return 'zero';
+}
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+const COLORS = ['c0','c1','c2','c3','c4','c5'];
+function stockColor(id) {
+  const idx = state.stocks.findIndex(s => s.id === id);
+  return COLORS[idx % COLORS.length];
+}
+function stockInitials(stock) {
+  return stock.code ? stock.code.slice(-2) : stock.name.slice(0, 2);
+}
+
+// ─── Navigation ──────────────────────────────────────────────────────────────
+function showView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+}
+function goHome() { showView('view-home'); renderHome(); }
+function goDetail(stockId) {
+  currentStockId = stockId;
+  showView('view-detail');
+  renderDetail(stockId);
+}
+
+// ─── Home ─────────────────────────────────────────────────────────────────────
+function renderHome() {
+  const stocks = state.stocks;
+
+  // Summary
+  const totalProfit = stocks.reduce((s, st) => s + (st.totalTProfit || 0), 0);
+  const totalTrades = stocks.reduce((s, st) => s + (st.trades || []).length, 0);
+  const totalStocks = stocks.length;
+  const pc = profitClass(totalProfit);
+
+  document.getElementById('home-summary').innerHTML = `
+    <div class="summary">
+      <div class="summary-label">累计 T 收益</div>
+      <div class="summary-amount ${pc}">${fmtMoney(totalProfit)}</div>
+      <div class="summary-stats">
+        <div class="summary-stat">
+          <div class="summary-stat-val">${totalStocks}</div>
+          <div class="summary-stat-label">支股票</div>
+        </div>
+        <div class="summary-stat">
+          <div class="summary-stat-val">${totalTrades}</div>
+          <div class="summary-stat-label">次 T 操作</div>
+        </div>
+      </div>
+    </div>`;
+
+  if (stocks.length === 0) {
+    document.getElementById('home-list').innerHTML = `
+      <div class="empty">
+        <div class="empty-icon">📊</div>
+        <div class="empty-title">还没有持仓</div>
+        <div class="empty-sub">点击右下角 ＋ 添加你的第一支持仓股票，开始记录 T 操作</div>
+      </div>`;
+    return;
+  }
+
+  const items = stocks.map((st, i) => {
+    const profit = st.totalTProfit || 0;
+    const pc = profitClass(profit);
+    const color = COLORS[i % COLORS.length];
+    return `
+      <div class="card-item" onclick="goDetail('${st.id}')">
+        <div class="stock-icon ${color}">${stockInitials(st)}</div>
+        <div class="card-main">
+          <div class="card-row1">
+            <span class="card-name">${st.name}${st.code ? ' <span style="font-size:13px;font-weight:400;color:var(--text2)">' + st.code + '</span>' : ''}</span>
+            <span class="card-profit ${pc}">${fmtMoney(profit)}</span>
+          </div>
+          <div class="card-row2">
+            <span class="card-sub">${fmt(st.shares, 0)} 股 · 成本 ¥${fmt(st.avgCost)}</span>
+            <span class="card-profit-label">${(st.trades||[]).length} 次T</span>
+          </div>
+        </div>
+        <svg class="card-arrow" width="7" height="12" viewBox="0 0 7 12" fill="currentColor"><path d="M1 1l5 5-5 5"/></svg>
+      </div>`;
+  }).join('');
+
+  document.getElementById('home-list').innerHTML = `
+    <div class="section-header">我的持仓</div>
+    <div class="card-list">${items}</div>`;
+}
+
+// ─── Detail ───────────────────────────────────────────────────────────────────
+function renderDetail(stockId) {
+  const st = state.stocks.find(s => s.id === stockId);
+  if (!st) { goHome(); return; }
+
+  document.getElementById('detail-hdr-title').textContent = st.name;
+
+  const profit = st.totalTProfit || 0;
+  const pc = profitClass(profit);
+  const color = stockColor(stockId);
+  const trades = (st.trades || []).slice().reverse();
+
+  const tradeRows = trades.length === 0
+    ? `<div class="empty" style="padding:40px 32px">
+        <div class="empty-icon">📝</div>
+        <div class="empty-title">还没有 T 操作记录</div>
+        <div class="empty-sub">点击右下角按钮记录第一次 T</div>
+       </div>`
+    : `<div class="section-header">T 操作记录（${trades.length}次）</div>
+       <div class="card-list">
+         ${trades.map((tr, i) => tradeRow(tr, i, trades.length)).join('')}
+       </div>`;
+
+  document.getElementById('detail-content').innerHTML = `
+    <div class="detail-hero">
+      <div class="detail-hero-top">
+        <div class="detail-hero-icon ${color}">${stockInitials(st)}</div>
+        <div>
+          <div class="detail-hero-name">${st.name}</div>
+          <div class="detail-hero-code">${st.code || '未设置代码'} · ${(st.trades||[]).length} 次 T</div>
+        </div>
+      </div>
+      <div class="detail-stats">
+        <div class="detail-stat">
+          <div class="detail-stat-val">${fmt(st.shares, 0)}</div>
+          <div class="detail-stat-label">持仓股数</div>
+        </div>
+        <div class="detail-stat">
+          <div class="detail-stat-val">¥${fmt(st.avgCost)}</div>
+          <div class="detail-stat-label">当前成本价</div>
+        </div>
+        <div class="detail-stat">
+          <div class="detail-stat-val ${pc}">${fmtMoney(profit)}</div>
+          <div class="detail-stat-label">累计 T 收益</div>
+        </div>
+      </div>
+    </div>
+    ${tradeRows}
+    <div style="height:80px"></div>`;
+}
+
+function tradeRow(tr, i, total) {
+  const pc = profitClass(tr.profit);
+  const idx = total - 1 - i; // original index
+  const sellVal = tr.sell !== undefined ? tr.sell : tr.sellPrice;
+  const buyVal = tr.buy !== undefined ? tr.buy : tr.buyPrice;
+  return `
+    <div class="card-item trade-item" onclick="showTradeActions('${tr.id}')">
+      <div style="flex:1">
+        <div class="trade-header">
+          <span class="trade-date">${tr.date}</span>
+          <span class="trade-profit ${pc}">${fmtMoney(tr.profit)}</span>
+        </div>
+        <div class="trade-body">
+          <span class="trade-tag">卖 <span class="val">¥${fmt(sellVal, 3)}</span></span>
+          <span class="trade-tag">买 <span class="val">¥${fmt(buyVal, 3)}</span></span>
+          <span class="trade-tag">量 <span class="val">${fmt(tr.qty || tr.quantity, 0)}股</span></span>
+        </div>
+        <div class="trade-meta">成本 ${tr.costBefore !== undefined ? '¥' + fmt(tr.costBefore) + ' → ' : ''}¥${fmt(tr.costAfter)} ${tr.note ? '· ' + tr.note : ''}</div>
+      </div>
+    </div>`;
+}
+
+// ─── Add/Edit Stock ───────────────────────────────────────────────────────────
+function openAddStockModal() {
+  document.getElementById('modal-stock-title').textContent = '添加持仓';
+  document.getElementById('stock-edit-id').value = '';
+  document.getElementById('stock-code').value = '';
+  document.getElementById('stock-name').value = '';
+  document.getElementById('stock-shares').value = '';
+  document.getElementById('stock-cost').value = '';
+  openModal('modal-stock');
+}
+function openEditStockModal() {
+  const st = state.stocks.find(s => s.id === currentStockId);
+  if (!st) return;
+  document.getElementById('modal-stock-title').textContent = '编辑持仓';
+  document.getElementById('stock-edit-id').value = st.id;
+  document.getElementById('stock-code').value = st.code || '';
+  document.getElementById('stock-name').value = st.name;
+  document.getElementById('stock-shares').value = st.shares;
+  document.getElementById('stock-cost').value = fmt(st.avgCost);
+  openModal('modal-stock');
+}
+function saveStock() {
+  const editId = document.getElementById('stock-edit-id').value;
+  const code = document.getElementById('stock-code').value.trim();
+  const name = document.getElementById('stock-name').value.trim();
+  const shares = parseFloat(document.getElementById('stock-shares').value);
+  const avgCost = parseFloat(document.getElementById('stock-cost').value);
+
+  if (!name) return alert('请填写股票名称');
+  if (isNaN(shares) || shares <= 0) return alert('请填写正确的持仓股数');
+  if (isNaN(avgCost) || avgCost <= 0) return alert('请填写正确的成本价');
+
+  if (editId) {
+    const st = state.stocks.find(s => s.id === editId);
+    if (st) { st.code = code; st.name = name; st.shares = shares; st.avgCost = avgCost; }
+  } else {
+    state.stocks.push({ id: uid(), code, name, shares, avgCost, totalTProfit: 0, trades: [] });
+  }
+  save();
+  closeModal('modal-stock');
+  if (editId) {
+    renderDetail(editId);
+  } else {
+    renderHome();
+  }
+}
+
+// ─── Add Trade ────────────────────────────────────────────────────────────────
+function openAddTradeModal() {
+  const st = state.stocks.find(s => s.id === currentStockId);
+  if (!st) return;
+  document.getElementById('trade-modal-subtitle').textContent = `${st.name} · 成本 ¥${fmt(st.avgCost)} · ${fmt(st.shares, 0)}股`;
+  document.getElementById('trade-date').value = todayStr();
+  document.getElementById('trade-sell').value = '';
+  document.getElementById('trade-buy').value = '';
+  document.getElementById('trade-qty').value = '';
+  document.getElementById('trade-calc').style.display = 'none';
+  openModal('modal-trade');
+}
+function updateTradeCalc() {
+  const sell = parseFloat(document.getElementById('trade-sell').value);
+  const buy = parseFloat(document.getElementById('trade-buy').value);
+  const qty = parseFloat(document.getElementById('trade-qty').value);
+  const st = state.stocks.find(s => s.id === currentStockId);
+  if (!st || isNaN(sell) || isNaN(buy) || isNaN(qty) || qty <= 0) {
+    document.getElementById('trade-calc').style.display = 'none';
+    return;
+  }
+  const profit = (sell - buy) * qty;
+  const newCost = (st.shares * st.avgCost - profit) / st.shares;
+  const drop = st.avgCost - newCost;
+
+  document.getElementById('trade-calc').style.display = 'block';
+  document.getElementById('calc-profit').textContent = fmtMoney(profit);
+  document.getElementById('calc-profit').className = 'calc-val ' + profitClass(profit);
+  document.getElementById('calc-cost-drop').textContent = (drop >= 0 ? '-¥' : '+¥') + Math.abs(drop).toFixed(4) + '/股';
+  document.getElementById('calc-cost-drop').className = 'calc-val ' + (drop >= 0 ? 'pos' : 'neg');
+  document.getElementById('calc-new-cost').textContent = '¥' + fmt(newCost);
+}
+function saveTrade() {
+  const st = state.stocks.find(s => s.id === currentStockId);
+  if (!st) return;
+  const date = document.getElementById('trade-date').value;
+  const sell = parseFloat(document.getElementById('trade-sell').value);
+  const buy = parseFloat(document.getElementById('trade-buy').value);
+  const qty = parseFloat(document.getElementById('trade-qty').value);
+
+  if (!date) return alert('请选择日期');
+  if (isNaN(sell) || sell <= 0) return alert('请填写卖出价');
+  if (isNaN(buy) || buy <= 0) return alert('请填写买入价');
+  if (isNaN(qty) || qty <= 0) return alert('请填写数量');
+  if (sell <= buy) {
+    if (!confirm(`卖出价(${sell}) ≤ 买入价(${buy})，此次T亏损，确认记录？`)) return;
+  }
+
+  const profit = (sell - buy) * qty;
+  const costBefore = st.avgCost;
+  const costAfter = (st.shares * st.avgCost - profit) / st.shares;
+
+  st.trades.push({ id: uid(), date, sell, buy, qty, profit, costBefore, costAfter });
+  st.totalTProfit = (st.totalTProfit || 0) + profit;
+  st.avgCost = costAfter;
+  save();
+  closeModal('modal-trade');
+  renderDetail(currentStockId);
+}
+
+// ─── Trade Actions ────────────────────────────────────────────────────────────
+let _pendingTradeId = null;
+function showTradeActions(tradeId) {
+  _pendingTradeId = tradeId;
+  const st = state.stocks.find(s => s.id === currentStockId);
+  const tr = st && (st.trades || []).find(t => t.id === tradeId);
+  if (!tr) return;
+  showActionSheet([
+    { label: `删除此条记录（${tr.date}）`, danger: true, action: () => deleteTrade(currentStockId, tradeId) }
+  ]);
+}
+function deleteTrade(stockId, tradeId) {
+  const st = state.stocks.find(s => s.id === stockId);
+  if (!st) return;
+  const tr = (st.trades || []).find(t => t.id === tradeId);
+  if (!tr) return;
+  // reverse the profit effect
+  const newAvgCost = (st.shares * st.avgCost + tr.profit) / st.shares;
+  st.avgCost = newAvgCost;
+  st.totalTProfit = (st.totalTProfit || 0) - tr.profit;
+  st.trades = st.trades.filter(t => t.id !== tradeId);
+  save();
+  renderDetail(stockId);
+}
+
+function confirmDeleteStock(stockId) {
+  const st = state.stocks.find(s => s.id === stockId);
+  if (!st) return;
+  showActionSheet([
+    { label: `删除「${st.name}」及所有T记录`, danger: true, action: () => {
+      state.stocks = state.stocks.filter(s => s.id !== stockId);
+      save();
+      goHome();
+    }}
+  ]);
+}
+
+// ─── Data Management ──────────────────────────────────────────────────────────
+function openEditDataModal() { openModal('modal-data'); }
+function exportData() {
+  const json = JSON.stringify(state, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 't_ledger_' + todayStr() + '.json';
+  a.click();
+}
+function importData(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!data.stocks) throw new Error('格式错误');
+      if (!confirm(`导入将覆盖现有数据（${state.stocks.length}支股票），确认？`)) return;
+      state = data;
+      save();
+      closeModal('modal-data');
+      renderHome();
+      alert('导入成功！');
+    } catch { alert('文件格式错误，请选择正确的T账本导出文件'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+function confirmClearAll() {
+  showActionSheet([
+    { label: '清空所有数据（不可恢复）', danger: true, action: () => {
+      state = { stocks: [] }; save();
+      closeModal('modal-data');
+      renderHome();
+    }}
+  ]);
+}
+
+// ─── Modal helpers ────────────────────────────────────────────────────────────
+function openModal(id) {
+  document.getElementById(id).classList.add('open');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+document.querySelectorAll('.modal-overlay').forEach(el => {
+  el.addEventListener('click', e => {
+    if (e.target === el) closeModal(el.id);
+  });
+});
+
+// ─── Action Sheet ─────────────────────────────────────────────────────────────
+function showActionSheet(actions) {
+  const container = document.getElementById('action-sheet-actions');
+  container.innerHTML = actions.map(a => `
+    <button class="action-btn ${a.danger ? 'danger' : ''}" onclick="runAction(${JSON.stringify(a.label)})">${a.label}</button>
+  `).join('');
+  window._sheetActions = actions;
+  document.getElementById('action-sheet').classList.add('open');
+}
+function runAction(label) {
+  const a = (window._sheetActions || []).find(x => x.label === label);
+  closeActionSheet();
+  if (a) setTimeout(a.action, 200);
+}
+function closeActionSheet() {
+  document.getElementById('action-sheet').classList.remove('open');
+}
+document.getElementById('action-sheet').addEventListener('click', e => {
+  if (e.target === document.getElementById('action-sheet')) closeActionSheet();
+});
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
+renderHome();
+</script>
+</body>
+</html>
