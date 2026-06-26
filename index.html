@@ -385,6 +385,36 @@ body {
   background: none; border: none; cursor: pointer;
   padding: 4px 8px;
 }
+
+/* ── Trend ───────────────────────────────── */
+.trend-stat-row {
+  display: flex; gap: 0;
+  margin: 16px 16px 0;
+}
+.trend-stat-box {
+  flex: 1; text-align: center;
+  padding: 14px 8px;
+  background: var(--card);
+  border: 0.5px solid var(--sep);
+}
+.trend-stat-box:first-child { border-radius: 12px 0 0 12px; }
+.trend-stat-box:last-child  { border-radius: 0 12px 12px 0; }
+.trend-stat-box + .trend-stat-box { border-left: none; }
+.trend-stat-box-val   { font-size: 16px; font-weight: 600; }
+.trend-stat-box-label { font-size: 12px; color: var(--text2); margin-top: 2px; }
+.chart-card {
+  margin: 12px 16px 0;
+  background: var(--card);
+  border-radius: 12px;
+  border: 0.5px solid var(--sep);
+  padding: 14px 0 6px;
+}
+.chart-card-title {
+  font-size: 12px; font-weight: 600; color: var(--text2);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  padding: 0 16px 10px;
+}
+.chart-box { width: 100%; height: 200px; }
 </style>
 </head>
 <body>
@@ -414,13 +444,32 @@ body {
           持仓
         </button>
         <span class="hdr-title" id="detail-hdr-title">—</span>
-        <button class="hdr-action edit-btn" onclick="openEditStockModal()">编辑</button>
+        <div style="margin-left:auto;display:flex;align-items:center">
+          <button class="hdr-action" style="margin-left:0" onclick="goTrend()">趋势</button>
+          <button class="hdr-action edit-btn" style="margin-left:0" onclick="openEditStockModal()">编辑</button>
+        </div>
       </div>
     </div>
     <div class="scroll animate-in" id="detail-scroll">
       <div id="detail-content"></div>
     </div>
     <button class="fab" onclick="openDetailFab()" aria-label="记录操作">＋</button>
+  </div>
+
+  <!-- ══ TREND VIEW ════════════════════════ -->
+  <div class="view" id="view-trend">
+    <div class="hdr">
+      <div class="hdr-inner">
+        <button class="hdr-back" onclick="backFromTrend()">
+          <svg width="10" height="17" viewBox="0 0 10 17" fill="currentColor"><path d="M8.5 1L1 8.5L8.5 16"/></svg>
+          <span id="trend-back-name">—</span>
+        </button>
+        <span class="hdr-title">趋势分析</span>
+      </div>
+    </div>
+    <div class="scroll animate-in">
+      <div id="trend-content"></div>
+    </div>
   </div>
 
 </div>
@@ -573,6 +622,7 @@ body {
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
 <script>
 // ─── State ──────────────────────────────────────────────────────────────────
 const STORE_KEY = 't_ledger_v1';
@@ -1102,6 +1152,180 @@ document.getElementById('action-sheet').addEventListener('click', e => {
 });
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
+// ─── Trend View ──────────────────────────────────────────────────────────────
+let _trendCharts = [];
+function clearTrendCharts() {
+  _trendCharts.forEach(c => { try { c.dispose(); } catch(e){} });
+  _trendCharts = [];
+}
+function chartTheme() {
+  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  return {
+    bg:     dark ? '#1c1c1e' : '#ffffff',
+    text:   dark ? '#8e8e93' : '#6c6c70',
+    text1:  dark ? '#ffffff' : '#000000',
+    line:   dark ? 'rgba(84,84,88,0.36)' : 'rgba(60,60,67,0.12)',
+    accent: '#007aff',
+    green:  '#34c759',
+    red:    '#ff3b30',
+    orange: '#ff9500',
+  };
+}
+function goTrend() {
+  const st = state.stocks.find(s => s.id === currentStockId);
+  if (st) document.getElementById('trend-back-name').textContent = st.name;
+  showView('view-trend');
+  renderTrend(currentStockId);
+}
+function backFromTrend() {
+  clearTrendCharts();
+  showView('view-detail');
+}
+function renderTrend(stockId) {
+  const st = state.stocks.find(s => s.id === stockId);
+  if (!st) return;
+  clearTrendCharts();
+
+  const tTrades = (st.trades || [])
+    .filter(t => !t.type || t.type === 't')
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const allTrades = (st.trades || [])
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (tTrades.length < 2) {
+    document.getElementById('trend-content').innerHTML = `
+      <div class="empty" style="padding:80px 32px">
+        <div class="empty-icon">📈</div>
+        <div class="empty-title">数据不足</div>
+        <div class="empty-sub">至少需要 2 次 T 操作才能显示趋势</div>
+      </div>`;
+    return;
+  }
+
+  const totalProfit = tTrades.reduce((s, t) => s + t.profit, 0);
+  const wins = tTrades.filter(t => t.profit > 0).length;
+  const winRate = (wins / tTrades.length * 100).toFixed(0);
+  const avgProfit = totalProfit / tTrades.length;
+
+  document.getElementById('trend-content').innerHTML = `
+    <div class="trend-stat-row">
+      <div class="trend-stat-box">
+        <div class="trend-stat-box-val ${profitClass(totalProfit)}">${fmtMoney(totalProfit)}</div>
+        <div class="trend-stat-box-label">累计T收益</div>
+      </div>
+      <div class="trend-stat-box">
+        <div class="trend-stat-box-val">${winRate}%</div>
+        <div class="trend-stat-box-label">总胜率</div>
+      </div>
+      <div class="trend-stat-box">
+        <div class="trend-stat-box-val ${profitClass(avgProfit)}">${fmtMoney(avgProfit)}</div>
+        <div class="trend-stat-box-label">均次收益</div>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title">累计 T 收益</div>
+      <div class="chart-box" id="chart-cumprofit"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title">成本价走势</div>
+      <div class="chart-box" id="chart-cost"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title">胜率滚动趋势（近10笔）</div>
+      <div class="chart-box" id="chart-winrate"></div>
+    </div>
+    <div style="height:32px"></div>`;
+
+  const th = chartTheme();
+  const xBase = {
+    type: 'category',
+    axisLine: { lineStyle: { color: th.line } },
+    axisTick: { show: false },
+    axisLabel: { fontSize: 10, color: th.text },
+  };
+  const yBase = {
+    type: 'value',
+    splitLine: { lineStyle: { color: th.line } },
+    axisLabel: { fontSize: 10, color: th.text },
+  };
+  const tipBase = { trigger: 'axis', backgroundColor: th.bg, borderColor: th.line, textStyle: { color: th.text1, fontSize: 12 } };
+  const grid = { left: 8, right: 8, top: 8, bottom: 36, containLabel: true };
+
+  // ── Chart 1: Cumulative T profit ──────────────────────────────────────────
+  const cumByDate = {};
+  tTrades.forEach(t => { cumByDate[t.date] = (cumByDate[t.date] || 0) + t.profit; });
+  const cumDates = Object.keys(cumByDate).sort();
+  let running = 0;
+  const cumVals = cumDates.map(d => +(running += cumByDate[d], running.toFixed(2)));
+
+  const c1 = echarts.init(document.getElementById('chart-cumprofit'));
+  _trendCharts.push(c1);
+  c1.setOption({
+    grid,
+    tooltip: { ...tipBase, formatter: p => `${p[0].axisValue}<br/>累计 <b>${p[0].value >= 0 ? '+' : ''}¥${p[0].value}</b>` },
+    xAxis: { ...xBase, data: cumDates, axisLabel: { ...xBase.axisLabel, formatter: v => v.slice(5) } },
+    yAxis: { ...yBase, axisLabel: { ...yBase.axisLabel, formatter: v => '¥' + v } },
+    series: [{
+      type: 'line', data: cumVals, smooth: true,
+      symbol: 'circle', symbolSize: 5,
+      lineStyle: { color: th.accent, width: 2 },
+      itemStyle: { color: th.accent },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+        colorStops: [{ offset: 0, color: 'rgba(0,122,255,0.22)' }, { offset: 1, color: 'rgba(0,122,255,0)' }] } },
+      markLine: { silent: true, symbol: 'none',
+        lineStyle: { color: th.line, type: 'dashed' }, data: [{ yAxis: 0 }] }
+    }],
+  });
+
+  // ── Chart 2: Cost basis (all trades) ─────────────────────────────────────
+  const costDates = allTrades.map(t => t.date);
+  const costVals  = allTrades.map(t => +Number(t.costAfter).toFixed(3));
+  const costClrs  = allTrades.map(t => t.type === 'buy' ? th.orange : th.green);
+
+  const c2 = echarts.init(document.getElementById('chart-cost'));
+  _trendCharts.push(c2);
+  c2.setOption({
+    grid,
+    tooltip: { ...tipBase, formatter: p => {
+      const tr = allTrades[p[0].dataIndex];
+      return `${p[0].axisValue} [${tr?.type === 'buy' ? '加仓' : 'T'}]<br/>成本价 <b>¥${p[0].value}</b>`;
+    }},
+    xAxis: { ...xBase, data: costDates, axisLabel: { ...xBase.axisLabel, formatter: v => v.slice(5) } },
+    yAxis: { ...yBase, scale: true, axisLabel: { ...yBase.axisLabel, formatter: v => '¥' + v } },
+    series: [{
+      type: 'line', data: costVals, smooth: false,
+      symbol: 'circle', symbolSize: 5,
+      lineStyle: { color: th.green, width: 2 },
+      itemStyle: { color: p => costClrs[p.dataIndex] },
+    }],
+  });
+
+  // ── Chart 3: Rolling win rate (last 10 T trades) ──────────────────────────
+  const winRates = tTrades.map((_, i) => {
+    const w = tTrades.slice(Math.max(0, i - 9), i + 1);
+    return +(w.filter(t => t.profit > 0).length / w.length * 100).toFixed(1);
+  });
+  const tradeLabels = tTrades.map((_, i) => `#${i + 1}`);
+
+  const c3 = echarts.init(document.getElementById('chart-winrate'));
+  _trendCharts.push(c3);
+  c3.setOption({
+    grid,
+    tooltip: { ...tipBase, formatter: p => `第 ${p[0].dataIndex + 1} 笔 · ${tTrades[p[0].dataIndex]?.date}<br/>近10笔胜率 <b>${p[0].value}%</b>` },
+    xAxis: { ...xBase, data: tradeLabels, axisLabel: { ...xBase.axisLabel, interval: Math.max(0, Math.floor(tTrades.length / 7) - 1) } },
+    yAxis: { ...yBase, min: 0, max: 100, axisLabel: { ...yBase.axisLabel, formatter: v => v + '%' } },
+    series: [{
+      type: 'line', data: winRates, smooth: true,
+      symbol: 'circle', symbolSize: 4,
+      lineStyle: { color: th.accent, width: 2 },
+      itemStyle: { color: p => winRates[p.dataIndex] >= 50 ? th.green : th.red },
+      markLine: { silent: true, symbol: 'none',
+        lineStyle: { color: th.text, type: 'dashed', opacity: 0.4 },
+        data: [{ yAxis: 50, label: { formatter: '50%', color: th.text, fontSize: 10 } }] }
+    }],
+  });
+}
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
