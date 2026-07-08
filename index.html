@@ -1263,9 +1263,53 @@ function recomputeStock(st) {
   });
 }
 
+// 检测：删掉某条 buy 记录后，哪些 sell 会因批次不足而无法成立
+function findSellDeps(st, buyTradeId) {
+  if (!st.trades) return [];
+  const idx = st.trades.findIndex(t => t.id === buyTradeId);
+  if (idx < 0) return [];
+  // 重放一遍 trades，但跳过目标 buy；记录中途回退（不足）的 sell
+  let shares = st.initialShares, avgCost = st.initialCost;
+  let lots = [{ qty: shares, cost: avgCost }];
+  const broken = [];
+  for (const tr of st.trades) {
+    if (tr.id === buyTradeId) continue;  // 模拟删除
+    if (tr.type === 'buy') {
+      const ca = (shares * avgCost + tr.qty * tr.price) / (shares + tr.qty);
+      shares += tr.qty; avgCost = ca;
+      lots.push({ qty: tr.qty, cost: tr.price });
+    } else if (tr.type === 'sell') {
+      const r = computeSell(lots, tr.price, tr.qty);
+      if (!r) { broken.push(tr.id); continue; }  // 该减仓因缺批次无法成立
+      shares = r.newShares; avgCost = r.newCost; lots = r.newLots;
+    } else {  // T：数量不变
+      avgCost = (shares * avgCost - (tr.sell - tr.buy) * tr.qty) / shares;
+    }
+  }
+  return broken;
+}
+
 function deleteTrade(stockId, tradeId) {
   const st = state.stocks.find(s => s.id === stockId);
   if (!st) return;
+  const tr = (st.trades || []).find(t => t.id === tradeId);
+  if (!tr) return;
+
+  // 删加仓：先检测是否有减仓依赖它
+  if (tr.type === 'buy' && st.initialShares !== undefined) {
+    recomputeStock(st);  // 确保 initialShares 已建立
+    const deps = findSellDeps(st, tradeId);
+    if (deps.length > 0) {
+      const depCount = deps.length;
+      if (!confirm(`该加仓被后续 ${depCount} 条减仓记录依赖，确认后将一并删除这些减仓记录。继续？`)) return;
+      st.trades = st.trades.filter(t => t.id !== tradeId && !deps.includes(t.id));
+      recomputeStock(st);
+      save();
+      renderDetail(stockId);
+      return;
+    }
+  }
+
   st.trades = (st.trades || []).filter(t => t.id !== tradeId);
   recomputeStock(st);
   save();
