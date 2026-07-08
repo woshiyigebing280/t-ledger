@@ -1218,44 +1218,56 @@ function showTradeActions(tradeId) {
   actions.push({ label: `删除此条记录（${tr.date}）`, danger: true, action: () => deleteTrade(currentStockId, tradeId) });
   showActionSheet(actions);
 }
+function recomputeStock(st) {
+  // 从 trades 完整重放，得到自洽的 shares/avgCost/lots/totalTProfit。
+  // 任意顺序删除/编辑单条记录后都调用，避免依赖可能失效的快照值。
+  if (!st.initialShares || !st.initialCost) {
+    // 旧数据没有记录初始基准：用最早一条记录的 sharesBefore/costBefore 反推
+    if (st.trades && st.trades.length) {
+      const first = st.trades[0];
+      st.initialShares = first.sharesBefore !== undefined ? first.sharesBefore : st.shares;
+      st.initialCost = first.costBefore !== undefined ? first.costBefore : st.avgCost;
+    } else {
+      // 没有任何记录：当前 shares/avgCost 即基准
+      st.initialShares = st.shares;
+      st.initialCost = st.avgCost;
+    }
+  }
+  st.shares = st.initialShares;
+  st.avgCost = st.initialCost;
+  st.lots = [{ qty: st.initialShares, cost: st.initialCost }];
+  st.totalTProfit = 0;
+
+  (st.trades || []).forEach(tr => {
+    if (tr.type === 'buy') {
+      const costAfter = (st.shares * st.avgCost + tr.qty * tr.price) / (st.shares + tr.qty);
+      tr.sharesBefore = st.shares; tr.costBefore = st.avgCost;
+      st.shares += tr.qty; st.avgCost = costAfter;
+      tr.sharesAfter = st.shares; tr.costAfter = costAfter;
+      st.lots.push({ qty: tr.qty, cost: tr.price });
+    } else if (tr.type === 'sell') {
+      const r = computeSell(st.lots, tr.price, tr.qty);
+      if (!r) return;  // 数据异常，跳过
+      tr.sharesBefore = st.shares; tr.costBefore = st.avgCost;
+      tr.profit = r.profit; tr.consumed = r.consumed;
+      st.shares = r.newShares; st.avgCost = r.newCost; st.lots = r.newLots;
+      tr.sharesAfter = st.shares; tr.costAfter = st.avgCost;
+      st.totalTProfit += r.profit;
+    } else {  // T 操作：高抛低吸，数量不变，利润冲减成本
+      const profit = (tr.sell - tr.buy) * tr.qty;
+      const costAfter = (st.shares * st.avgCost - profit) / st.shares;
+      tr.costBefore = st.avgCost; tr.costAfter = costAfter; tr.profit = profit;
+      st.avgCost = costAfter;
+      st.totalTProfit += profit;
+    }
+  });
+}
+
 function deleteTrade(stockId, tradeId) {
   const st = state.stocks.find(s => s.id === stockId);
   if (!st) return;
-  const tr = (st.trades || []).find(t => t.id === tradeId);
-  if (!tr) return;
-  if (tr.type === 'buy') {
-    st.shares = tr.sharesBefore;
-    st.avgCost = tr.costBefore;
-    // 回滚 lots：移除本次加仓在末尾追加的批次
-    if (Array.isArray(st.lots)) {
-      let toRemove = tr.qty;
-      while (toRemove > 0 && st.lots.length) {
-        const last = st.lots[st.lots.length - 1];
-        if (last.qty <= toRemove) { toRemove -= last.qty; st.lots.pop(); }
-        else { last.qty -= toRemove; toRemove = 0; }
-      }
-    }
-  } else if (tr.type === 'sell') {
-    // 按 consumed 记录把批次还原回去（LIFO 逆向插入），shares/利润回滚
-    if (Array.isArray(st.lots) && Array.isArray(tr.consumed)) {
-      // consumed 是按 lotIdx 升序记录；逆向还原时从前往后增加 qty 即可（idx 保持有效）
-      const byIdx = {};
-      tr.consumed.forEach(c => { byIdx[c.lotIdx] = (byIdx[c.lotIdx] || 0) + c.qty; });
-      // 若 lotIdx 越界（删除了后续操作导致 lots 变短），扩容补齐
-      for (const idxStr of Object.keys(byIdx)) {
-        const idx = parseInt(idxStr, 10);
-        while (st.lots.length <= idx) st.lots.push({ qty: 0, cost: byIdx[idx] });
-        st.lots[idx].qty += byIdx[idx];
-      }
-    }
-    st.shares = tr.sharesBefore;
-    st.avgCost = tr.costBefore;
-    st.totalTProfit = (st.totalTProfit || 0) - tr.profit;
-  } else {
-    st.avgCost = tr.costBefore !== undefined ? tr.costBefore : (st.shares * st.avgCost + tr.profit) / st.shares;
-    st.totalTProfit = (st.totalTProfit || 0) - tr.profit;
-  }
-  st.trades = st.trades.filter(t => t.id !== tradeId);
+  st.trades = (st.trades || []).filter(t => t.id !== tradeId);
+  recomputeStock(st);
   save();
   renderDetail(stockId);
 }
