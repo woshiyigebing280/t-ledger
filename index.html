@@ -671,20 +671,9 @@ const STORE_KEY = 't_ledger_v1';
 let state = load();
 let currentStockId = null;
 
-function migrateLots(s) {
-  // 为没有 lots 字段的旧数据兜底：把现有持仓整体当作一个批次
-  if (!s.stocks) return s;
-  s.stocks.forEach(st => {
-    if (!Array.isArray(st.lots) || st.lots.length === 0) {
-      st.lots = st.shares > 0 ? [{ qty: st.shares, cost: st.avgCost }] : [];
-    }
-  });
-  return s;
-}
 function load() {
   try {
-    const s = JSON.parse(localStorage.getItem(STORE_KEY)) || { stocks: [] };
-    return migrateLots(s);
+    return JSON.parse(localStorage.getItem(STORE_KEY)) || { stocks: [] };
   } catch { return { stocks: [] }; }
 }
 function save() {
@@ -868,9 +857,6 @@ function tradeRow(tr) {
   }
   if (tr.type === 'sell') {
     const pc = profitClass(tr.profit);
-    const sub = (tr.consumed && tr.consumed.length)
-      ? '配对批次 ' + tr.consumed.map(c => `${fmt(c.qty,0)}@¥${fmt(c.cost)}`).join('、')
-      : '';
     return `
       <div class="card-item trade-item" onclick="showTradeActions('${tr.id}')">
         <div style="flex:1">
@@ -882,7 +868,7 @@ function tradeRow(tr) {
             <span class="trade-tag">卖出价 <span class="val">¥${fmt(tr.price, 3)}</span></span>
             <span class="trade-tag">数量 <span class="val">${fmt(tr.qty,0)}股</span></span>
           </div>
-          <div class="trade-meta">持仓 ${fmt(tr.sharesBefore,0)} → ${fmt(tr.sharesAfter,0)}股 · 成本 ¥${fmt(tr.costBefore)} → ¥${fmt(tr.costAfter)}${sub ? ' · ' + sub : ''}</div>
+          <div class="trade-meta">持仓 ${fmt(tr.sharesBefore,0)} → ${fmt(tr.sharesAfter,0)}股 · 成本 ¥${fmt(tr.costAfter)}（按均价结转）</div>
         </div>
       </div>`;
   }
@@ -941,11 +927,14 @@ function saveStock() {
   if (editId) {
     const st = state.stocks.find(s => s.id === editId);
     if (st) {
-      st.code = code; st.name = name; st.shares = shares; st.avgCost = avgCost;
-      st.lots = [{ qty: shares, cost: avgCost }];  // 手动改持仓时整体重置为一个批次
+      // 编辑持仓 = 重新设定基准（视为"真实的当前状态"），trades 保持但旧快照会通过重算刷新
+      st.code = code; st.name = name;
+      st.shares = shares; st.avgCost = avgCost;
+      st.initialShares = shares; st.initialCost = avgCost;
+      recomputeStock(st);
     }
   } else {
-    state.stocks.push({ id: uid(), code, name, shares, avgCost, lots: [{ qty: shares, cost: avgCost }], totalTProfit: 0, trades: [] });
+    state.stocks.push({ id: uid(), code, name, shares, avgCost, initialShares: shares, initialCost: avgCost, totalTProfit: 0, trades: [] });
   }
   save();
   closeModal('modal-stock');
@@ -1015,36 +1004,19 @@ function saveBuy() {
   st.trades.push({ id: uid(), type: 'buy', date, price, qty, sharesBefore, sharesAfter, costBefore, costAfter });
   st.shares = sharesAfter;
   st.avgCost = costAfter;
-  (st.lots || (st.lots = [])).push({ qty, cost: price });
   save();
   closeModal('modal-buy');
   renderDetail(currentStockId);
 }
 
-// ─── Sell (减仓，LIFO 配对批次) ───────────────────────────────────────────────
-// 返回 { profit, newShares, newCost, newLots, consumed }
-// consumed: [{lotIdx, qty, cost}] 记录消耗了哪些批次，供删除时精确回滚
+// ─── Sell (减仓，移动加权平均) ─────────────────────────────────────────────────
+// 卖出盈亏 = (卖出价 − 当前均价) × 量；卖出部分按均价结转，剩下来的均价不变。
 function computeSell(st, price, sellQty) {
-  const lots = (st.lots || []).map(l => ({ qty: l.qty, cost: l.cost }));  // 浅拷贝 LIFO 操作
-  let remaining = sellQty;
-  let profit = 0;
-  const consumed = [];
-  for (let i = lots.length - 1; i >= 0 && remaining > 0; i--) {
-    if (lots[i].qty <= 0) continue;
-    const take = Math.min(lots[i].qty, remaining);
-    profit += (price - lots[i].cost) * take;
-    lots[i].qty -= take;
-    consumed.unshift({ lotIdx: i, qty: take, cost: lots[i].cost });
-    remaining -= take;
-  }
-  // 剩余没匹配上（卖出超过持仓）——理论上 UI 已校验，这里兜底
-  if (remaining > 0) return null;
-
-  const newLots = lots.filter(l => l.qty > 1e-9);
-  const newShares = newLots.reduce((s, l) => s + l.qty, 0);
-  const totalCost = newLots.reduce((s, l) => s + l.qty * l.cost, 0);
-  const newCost = newShares > 0 ? totalCost / newShares : 0;
-  return { profit, newShares, newCost, newLots, consumed };
+  if (sellQty > st.shares) return null;
+  const profit = (price - st.avgCost) * sellQty;
+  const newShares = st.shares - sellQty;
+  const newCost = newShares > 0 ? st.avgCost : 0;  // 加权平均下卖出不改均价
+  return { profit, newShares, newCost };
 }
 
 function openAddSellModal() {
@@ -1070,6 +1042,7 @@ function updateSellCalc() {
     return;
   }
   const r = computeSell(st, price, qty);
+  if (!r) { el.style.display = 'none'; return; }  // 卖出量超持仓
   el.style.display = 'block';
   document.getElementById('sell-calc-shares').textContent = `${fmt(st.shares,0)} → ${fmt(r.newShares,0)} 股`;
   document.getElementById('sell-calc-profit').textContent = fmtMoney(r.profit);
@@ -1097,11 +1070,9 @@ function saveSell() {
     id: uid(), type: 'sell', date, price, qty,
     profit: r.profit, sharesBefore, sharesAfter: r.newShares,
     costBefore, costAfter: r.newCost,
-    consumed: r.consumed,
   });
   st.shares = r.newShares;
   st.avgCost = r.newCost;
-  st.lots = r.newLots;
   st.totalTProfit = (st.totalTProfit || 0) + r.profit;
   save();
   closeModal('modal-sell');
@@ -1219,23 +1190,20 @@ function showTradeActions(tradeId) {
   showActionSheet(actions);
 }
 function recomputeStock(st) {
-  // 从 trades 完整重放，得到自洽的 shares/avgCost/lots/totalTProfit。
-  // 任意顺序删除/编辑单条记录后都调用，避免依赖可能失效的快照值。
+  // 从 trades 完整重放，得到自洽的 shares/avgCost/totalTProfit。
+  // 移动加权平均：卖出按均价结转，剩下来的均价不变。
   if (!st.initialShares || !st.initialCost) {
-    // 旧数据没有记录初始基准：用最早一条记录的 sharesBefore/costBefore 反推
     if (st.trades && st.trades.length) {
       const first = st.trades[0];
       st.initialShares = first.sharesBefore !== undefined ? first.sharesBefore : st.shares;
       st.initialCost = first.costBefore !== undefined ? first.costBefore : st.avgCost;
     } else {
-      // 没有任何记录：当前 shares/avgCost 即基准
       st.initialShares = st.shares;
       st.initialCost = st.avgCost;
     }
   }
   st.shares = st.initialShares;
   st.avgCost = st.initialCost;
-  st.lots = [{ qty: st.initialShares, cost: st.initialCost }];
   st.totalTProfit = 0;
 
   (st.trades || []).forEach(tr => {
@@ -1244,15 +1212,13 @@ function recomputeStock(st) {
       tr.sharesBefore = st.shares; tr.costBefore = st.avgCost;
       st.shares += tr.qty; st.avgCost = costAfter;
       tr.sharesAfter = st.shares; tr.costAfter = costAfter;
-      st.lots.push({ qty: tr.qty, cost: tr.price });
     } else if (tr.type === 'sell') {
-      const r = computeSell(st.lots, tr.price, tr.qty);
-      if (!r) return;  // 数据异常，跳过
+      const profit = (tr.price - st.avgCost) * tr.qty;
       tr.sharesBefore = st.shares; tr.costBefore = st.avgCost;
-      tr.profit = r.profit; tr.consumed = r.consumed;
-      st.shares = r.newShares; st.avgCost = r.newCost; st.lots = r.newLots;
-      tr.sharesAfter = st.shares; tr.costAfter = st.avgCost;
-      st.totalTProfit += r.profit;
+      tr.sharesAfter = st.shares - tr.qty; tr.costAfter = st.avgCost;  // 加权平均下均价不变
+      st.shares -= tr.qty;  // avgCost 不变
+      tr.profit = profit;
+      st.totalTProfit += profit;
     } else {  // T 操作：高抛低吸，数量不变，利润冲减成本
       const profit = (tr.sell - tr.buy) * tr.qty;
       const costAfter = (st.shares * st.avgCost - profit) / st.shares;
@@ -1263,53 +1229,9 @@ function recomputeStock(st) {
   });
 }
 
-// 检测：删掉某条 buy 记录后，哪些 sell 会因批次不足而无法成立
-function findSellDeps(st, buyTradeId) {
-  if (!st.trades) return [];
-  const idx = st.trades.findIndex(t => t.id === buyTradeId);
-  if (idx < 0) return [];
-  // 重放一遍 trades，但跳过目标 buy；记录中途回退（不足）的 sell
-  let shares = st.initialShares, avgCost = st.initialCost;
-  let lots = [{ qty: shares, cost: avgCost }];
-  const broken = [];
-  for (const tr of st.trades) {
-    if (tr.id === buyTradeId) continue;  // 模拟删除
-    if (tr.type === 'buy') {
-      const ca = (shares * avgCost + tr.qty * tr.price) / (shares + tr.qty);
-      shares += tr.qty; avgCost = ca;
-      lots.push({ qty: tr.qty, cost: tr.price });
-    } else if (tr.type === 'sell') {
-      const r = computeSell(lots, tr.price, tr.qty);
-      if (!r) { broken.push(tr.id); continue; }  // 该减仓因缺批次无法成立
-      shares = r.newShares; avgCost = r.newCost; lots = r.newLots;
-    } else {  // T：数量不变
-      avgCost = (shares * avgCost - (tr.sell - tr.buy) * tr.qty) / shares;
-    }
-  }
-  return broken;
-}
-
 function deleteTrade(stockId, tradeId) {
   const st = state.stocks.find(s => s.id === stockId);
   if (!st) return;
-  const tr = (st.trades || []).find(t => t.id === tradeId);
-  if (!tr) return;
-
-  // 删加仓：先检测是否有减仓依赖它
-  if (tr.type === 'buy' && st.initialShares !== undefined) {
-    recomputeStock(st);  // 确保 initialShares 已建立
-    const deps = findSellDeps(st, tradeId);
-    if (deps.length > 0) {
-      const depCount = deps.length;
-      if (!confirm(`该加仓被后续 ${depCount} 条减仓记录依赖，确认后将一并删除这些减仓记录。继续？`)) return;
-      st.trades = st.trades.filter(t => t.id !== tradeId && !deps.includes(t.id));
-      recomputeStock(st);
-      save();
-      renderDetail(stockId);
-      return;
-    }
-  }
-
   st.trades = (st.trades || []).filter(t => t.id !== tradeId);
   recomputeStock(st);
   save();
@@ -1347,7 +1269,7 @@ function importData(e) {
       const data = JSON.parse(ev.target.result);
       if (!data.stocks) throw new Error('格式错误');
       if (!confirm(`导入将覆盖现有数据（${state.stocks.length}支股票），确认？`)) return;
-      state = migrateLots(data);
+      state = data;
       save();
       closeModal('modal-data');
       renderHome();
