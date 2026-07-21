@@ -423,7 +423,7 @@ body {
 .chart-card-title .enlarge-btn:active { opacity: 1; }
 .chart-box { width: 100%; height: 200px; }
 
-/* 全屏图查看器：竖屏铺满，可双指缩放 */
+/* 全屏图查看器：竖屏下强制「横向铺满」靠 JS 设宽高 + 绝对定位 */
 .chart-fullscreen {
   position: fixed; inset: 0; z-index: 1000;
   background: var(--card);
@@ -1469,23 +1469,44 @@ function getChartInstanceById(id) {
   const i = _trendChartIds.indexOf(id);
   return i >= 0 ? _trendCharts[i] : null;
 }
+// 全屏图查看器：竖屏提醒用户转动，转后自动按横屏铺满（无 CSS 旋转，跨 iOS/Safari 稳定）
+let _onOrientResize = null;
 function openChartFullscreen(id, title) {
   const src = getChartInstanceById(id);
   if (!src) return;
+  const el = document.getElementById('chart-fullscreen');
   document.getElementById('fs-title').textContent = title || id;
-  document.getElementById('chart-fullscreen').classList.add('open');
-  // 复用原 option 重画到全屏容器
+  el.classList.add('open');
+  // 竖屏打开时先提示用户转横屏；横屏打开直接画
+  if (window.matchMedia('(orientation: portrait)').matches) {
+    document.getElementById('fs-hint').textContent = '🔁 请将手机横置以更好的查看';
+  } else {
+    document.getElementById('fs-hint').textContent = '双指捏合缩放';
+  }
+  drawFullscreen(src);
+  // 监听设备旋转，自动 resize echarts 以铺满新尺寸
+  _onOrientResize = () => { if (_fsChart) _fsChart.resize(); };
+  window.addEventListener('resize', _onOrientResize);
+  window.addEventListener('orientationchange', _onOrientResize);
+}
+function drawFullscreen(src) {
   if (_fsChart) { try { _fsChart.dispose(); } catch(e){} }
   const opt = JSON.parse(JSON.stringify(src.getOption(),
-    (k, v) => typeof v === 'function' ? null : v));  // function 不序列化
+    (k, v) => typeof v === 'function' ? null : v));
   _fsChart = echarts.init(document.getElementById('fs-box'));
   _fsChart.setOption(opt);
-  // 全屏下加大字号、留更多 padding（量大效果更好）
   _fsChart.setOption({ textStyle: { fontSize: 13 } });
 }
 function closeChartFullscreen() {
-  document.getElementById('chart-fullscreen').classList.remove('open');
+  const el = document.getElementById('chart-fullscreen');
+  el.classList.remove('open');
+  if (_onOrientResize) {
+    window.removeEventListener('resize', _onOrientResize);
+    window.removeEventListener('orientationchange', _onOrientResize);
+    _onOrientResize = null;
+  }
   if (_fsChart) { try { _fsChart.dispose(); } catch(e){} _fsChart = null; }
+  document.getElementById('fs-hint').textContent = '双指捏合缩放';
 }
 function chartTheme() {
   const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
