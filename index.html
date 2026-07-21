@@ -1273,6 +1273,12 @@ function deleteTrade(stockId, tradeId) {
 // 同时重算 st.totalTProfit（旧版可能是原币值）。
 async function migrateLegacyFx() {
   // 任何状态下都先确保 fxSnapshot 存在（拉一次或用兜底）
+  return await recomputeAllProfitCNY(false);
+}
+// 重算所有 trade 的 profitCNY
+//   force=false 时只填缺失的（迁移老 JSON 用）
+//   force=true 时无视已有 profitCNY，按最新 fxSnapshot 全部重算（导入新 JSON 时统一）
+async function recomputeAllProfitCNY(force) {
   if (!state.fxSnapshot || !state.fxSnapshot.ts) await fetchFX();
   if (!state.fxSnapshot) state.fxSnapshot = { ts: 0, rUSD: 7.2, rHKD: 0.92 };
   for (const st of state.stocks) {
@@ -1282,10 +1288,10 @@ async function migrateLegacyFx() {
               : 1;
     for (const tr of (st.trades || [])) {
       if (tr.type === 'buy') continue;
-      if (tr.profitCNY === undefined) {
+      if (force || tr.profitCNY === undefined) {
         tr.profitCNY = +((tr.profit || 0) * fx).toFixed(4);
         tr.fxRate = fx;
-        tr.migratedAt = Date.now();
+        if (force || !tr.migratedAt) tr.migratedAt = Date.now();
       }
     }
     // 重算 totalTProfit（CNY）
@@ -1328,13 +1334,15 @@ function importData(e) {
       if (!data.stocks) throw new Error('格式错误');
       if (!confirm(`导入将覆盖现有数据（${state.stocks.length}支股票），确认？`)) return;
       state = data;
+      // 导入后清除 fxSnapshot 强制刷新（用本机当前汇率作为新基准）
+      state.fxSnapshot = null; _fxCache = null;
       save();
       closeModal('modal-data');
       renderHome();
-      // 老 JSON（无 fxSnapshot）的，或部分 trade 缺 profitCNY → 自动迁移
-      await migrateLegacyFx();
+      // 强制迁移 + 重算所有 trade 的 profitCNY（包括那些已带旧值的）
+      await recomputeAllProfitCNY(true);
       renderHome();
-      alert('导入成功！');
+      alert('导入成功！收益已按当前汇率换算并固化。');
     } catch { alert('文件格式错误，请选择正确的T账本导出文件'); }
   };
   reader.readAsText(file);
@@ -1642,19 +1650,22 @@ async function fxForMarket(market) {
   const fx = await fetchFX();
   return market === 'US' ? fx.rUSD : fx.rHKD;
 }
-// 手动触发刷新汇率（数据管理面板按钮）
 async function refreshFX() {
-  alert('正在拉取最新汇率…');
+  // 用按钮 caption 表示"加载中"，避免用 alert 阻塞
+  const btn = event?.target;
+  const oldText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '刷新中…'; }
   _fxCache = null;  // 强制不命中缓存
   const fx = await fetchFX();
+  if (btn) { btn.disabled = false; btn.textContent = oldText; }
+  // 重算现有 trade 的 profitCNY（让用户下次看到准确值）
+  await migrateLegacyFx();
+  renderHome();
   if (fx.ts > 0) {
     alert(`已更新：¥${fx.rUSD.toFixed(4)}/$ · ¥${fx.rHKD.toFixed(4)}/HK$（${new Date(fx.ts).toLocaleString('zh-CN')}）`);
   } else {
     alert('拉取失败（网络或接口问题），已使用兜底汇率 ¥7.2/$、¥0.92/HK$。下次有网会自动重试。');
   }
-  // 重算现有 trade 的 profitCNY（让用户下次看到准确值）
-  await migrateLegacyFx();
-  renderHome();
 }
 // 当前市场汇率：港美股拉(fetchFX)、A 股 / 未知返回 1
 // 注：永远返回最新汇率（用于新交易发生时换算，并写进 trade.profitCNY 作为快照）
