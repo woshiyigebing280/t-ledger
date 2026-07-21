@@ -413,8 +413,38 @@ body {
   font-size: 12px; font-weight: 600; color: var(--text2);
   text-transform: uppercase; letter-spacing: 0.5px;
   padding: 0 16px 10px;
+  display: flex; align-items: center; justify-content: space-between;
 }
+.chart-card-title .enlarge-btn {
+  background: none; border: none; padding: 4px 6px; margin: -4px -6px 0 0;
+  color: var(--text2); opacity: 0.55; cursor: pointer;
+  font-size: 11px; line-height: 1;
+}
+.chart-card-title .enlarge-btn:active { opacity: 1; }
 .chart-box { width: 100%; height: 200px; }
+
+/* 全屏图查看器：竖屏铺满，可双指缩放 */
+.chart-fullscreen {
+  position: fixed; inset: 0; z-index: 1000;
+  background: var(--card);
+  display: none; flex-direction: column;
+}
+.chart-fullscreen.open { display: flex; }
+.chart-fullscreen .fs-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 0.5px solid var(--sep);
+  flex-shrink: 0;
+}
+.chart-fullscreen .fs-title { font-size: 14px; font-weight: 600; color: var(--text1); }
+.chart-fullscreen .fs-close {
+  background: var(--bg2); border: none; border-radius: 14px;
+  padding: 4px 12px; font-size: 12px; color: var(--text1); cursor: pointer;
+}
+.chart-fullscreen .fs-box { flex: 1; width: 100%; min-height: 0; }
+.chart-fullscreen .fs-hint {
+  text-align: center; color: var(--text3); font-size: 11px;
+  padding: 6px; flex-shrink: 0;
+}
 </style>
 </head>
 <body>
@@ -469,6 +499,16 @@ body {
     </div>
     <div class="scroll animate-in">
       <div id="trend-content"></div>
+    </div>
+
+    <!-- 全屏图查看器 -->
+    <div class="chart-fullscreen" id="chart-fullscreen">
+      <div class="fs-hdr">
+        <div class="fs-title" id="fs-title">—</div>
+        <button class="fs-close" onclick="closeChartFullscreen()">关闭</button>
+      </div>
+      <div class="fs-box" id="fs-box"></div>
+      <div class="fs-hint">双指捏合缩放 · 双击放大</div>
     </div>
   </div>
 
@@ -690,6 +730,37 @@ function fmtMoney(n) {
   const sign = n > 0 ? '+' : n < 0 ? '-' : '';
   return sign + '¥' + abs.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
+// 返回 HTML 字符串：A 股原样显示；港美股标记 data-fx，等待 applyFX 异步换算
+function fmtMoneyFX(n, market) {
+  const m = market || 'A';
+  const cnt = n > 0 ? '+' : n < 0 ? '-' : '';
+  const abs = Math.abs(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  if (m === 'CNY' || m === 'A') {
+    return cnt + '¥' + abs;
+  }
+  // 港/美：先以原币显示，等异步回填 CNY
+  const sym = m === 'HK' ? 'HK$' : 'US$';
+  return `<span data-fx="${n}" data-cur="${m}">${cnt}${sym}${abs}</span>`;
+}
+
+// 拿到汇率后，把所有 data-fx 元素替换成 ¥值（保留原币称作为 title/副标）
+async function applyFX() {
+  // 没有任何港美股标记 → 免请求
+  if (!document.querySelector('[data-fx]')) return;
+  const fx = await fetchFX();
+  document.querySelectorAll('[data-fx]').forEach(el => {
+    const orig = parseFloat(el.dataset.fx);
+    const cur = el.dataset.cur;
+    const rate = cur === 'USD' ? fx.USD?.CNY : cur === 'HKD' ? fx.HKD?.CNY : 1;
+    const cny = orig * (rate || 1);
+    const sign = cny > 0 ? '+' : cny < 0 ? '-' : '';
+    const abs = Math.abs(cny).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const altSign = orig > 0 ? '+' : orig < 0 ? '-' : '';
+    const altAbs = Math.abs(orig).toFixed(2);
+    const altSym = cur === 'USD' ? 'US$' : 'HK$';
+    el.innerHTML = `${sign}¥${abs}<span style="opacity:0.5;font-size:0.85em;margin-left:2px">≈ ${altSign}${altSym}${altAbs}</span>`;
+  });
+}
 function profitClass(n) {
   if (n > 0) return 'pos';
   if (n < 0) return 'neg';
@@ -762,13 +833,14 @@ function renderHome() {
     const profit = st.totalTProfit || 0;
     const pc = profitClass(profit);
     const color = COLORS[i % COLORS.length];
+    const mk = marketOf(st.code);
     return `
       <div class="card-item" onclick="goDetail('${st.id}')">
         <div class="stock-icon ${color}">${stockInitials(st)}</div>
         <div class="card-main">
           <div class="card-row1">
             <span class="card-name">${st.name}${st.code ? ' <span style="font-size:13px;font-weight:400;color:var(--text2)">' + st.code + '</span>' : ''}</span>
-            <span class="card-profit ${pc}">${fmtMoney(profit)}</span>
+            <span class="card-profit ${pc}">${fmtMoneyFX(profit, mk)}</span>
           </div>
           <div class="card-row2">
             <span class="card-sub">${fmt(st.shares, 0)} 股 · 成本 ¥${fmt(st.avgCost)}</span>
@@ -782,6 +854,28 @@ function renderHome() {
   document.getElementById('home-list').innerHTML = `
     <div class="section-header">我的持仓</div>
     <div class="card-list">${items}</div>`;
+
+  // 首页总收益（按各股市换算成 CNY 合计）
+  if (stocks.some(s => { const m = marketOf(s.code); return m === 'HK' || m === 'US'; })) {
+    summarizeProfitInCNY(stocks).then(totalCNY => {
+      const pc2 = profitClass(totalCNY);
+      const sign = totalCNY > 0 ? '+' : totalCNY < 0 ? '-' : '';
+      const abs = Math.abs(totalCNY).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      document.querySelector('.summary-amount').innerHTML = `${sign}¥${abs}`;
+      document.querySelector('.summary-amount').className = `summary-amount ${pc2}`;
+    });
+  }
+  applyFX();
+}
+
+// 把多市场持仓的总收益统一换算成 CNY 合计（港美股按当前汇率）
+async function summarizeProfitInCNY(stocks) {
+  let total = 0;
+  for (const s of stocks) {
+    const profit = s.totalTProfit || 0;
+    total += await toCNY(profit, marketOf(s.code));
+  }
+  return total;
 }
 
 // ─── Detail ───────────────────────────────────────────────────────────────────
@@ -827,13 +921,14 @@ function renderDetail(stockId) {
           <div class="detail-stat-label">当前成本价</div>
         </div>
         <div class="detail-stat">
-          <div class="detail-stat-val ${pc}">${fmtMoney(profit)}</div>
+          <div class="detail-stat-val ${pc}">${fmtMoneyFX(profit, marketOf(st.code))}</div>
           <div class="detail-stat-label">累计 T 收益</div>
         </div>
       </div>
     </div>
     ${tradeRows}
     <div style="height:80px"></div>`;
+  applyFX();
 }
 
 function tradeRow(tr) {
@@ -1323,11 +1418,35 @@ document.getElementById('action-sheet').addEventListener('click', e => {
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 // ─── Trend View ──────────────────────────────────────────────────────────────
-let _trendCharts = [];
-let _trendRenderToken = 0;  // 防 async 竞态：每次 renderTrend 自增，async 回来比对
+let _trendCharts = [];          // 按渲染顺序：[cumprofit, cost, winrate, tradepoints]
+let _trendChartIds = [];        // 同位置存 DOM id，便于按 id 查实例
+let _trendRenderToken = 0;      // 防 async 竞态
+let _fsChart = null;
 function clearTrendCharts() {
   _trendCharts.forEach(c => { try { c.dispose(); } catch(e){} });
-  _trendCharts = [];
+  _trendCharts = []; _trendChartIds = [];
+}
+function getChartInstanceById(id) {
+  const i = _trendChartIds.indexOf(id);
+  return i >= 0 ? _trendCharts[i] : null;
+}
+function openChartFullscreen(id, title) {
+  const src = getChartInstanceById(id);
+  if (!src) return;
+  document.getElementById('fs-title').textContent = title || id;
+  document.getElementById('chart-fullscreen').classList.add('open');
+  // 复用原 option 重画到全屏容器
+  if (_fsChart) { try { _fsChart.dispose(); } catch(e){} }
+  const opt = JSON.parse(JSON.stringify(src.getOption(),
+    (k, v) => typeof v === 'function' ? null : v));  // function 不序列化
+  _fsChart = echarts.init(document.getElementById('fs-box'));
+  _fsChart.setOption(opt);
+  // 全屏下加大字号、留更多 padding（量大效果更好）
+  _fsChart.setOption({ textStyle: { fontSize: 13 } });
+}
+function closeChartFullscreen() {
+  document.getElementById('chart-fullscreen').classList.remove('open');
+  if (_fsChart) { try { _fsChart.dispose(); } catch(e){} _fsChart = null; }
 }
 function chartTheme() {
   const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -1395,19 +1514,19 @@ function renderTrend(stockId) {
       </div>
     </div>
     <div class="chart-card">
-      <div class="chart-card-title">累计 T 收益</div>
+      <div class="chart-card-title">累计 T 收益 <button class="enlarge-btn" onclick="openChartFullscreen('chart-cumprofit','累计 T 收益')">放大 ⤢</button></div>
       <div class="chart-box" id="chart-cumprofit"></div>
     </div>
     <div class="chart-card">
-      <div class="chart-card-title">成本价走势</div>
+      <div class="chart-card-title">成本价走势 <button class="enlarge-btn" onclick="openChartFullscreen('chart-cost','成本价走势')">放大 ⤢</button></div>
       <div class="chart-box" id="chart-cost"></div>
     </div>
     <div class="chart-card">
-      <div class="chart-card-title">胜率滚动趋势（近10笔）</div>
+      <div class="chart-card-title">胜率滚动趋势（近10笔） <button class="enlarge-btn" onclick="openChartFullscreen('chart-winrate','胜率滚动趋势')">放大 ⤢</button></div>
       <div class="chart-box" id="chart-winrate"></div>
     </div>
     <div class="chart-card">
-      <div class="chart-card-title" id="chart-tradepoints-title">买卖点位 + 行情</div>
+      <div class="chart-card-title" id="chart-tradepoints-title">买卖点位 + 行情 <button class="enlarge-btn" onclick="openChartFullscreen('chart-tradepoints','买卖点位 + 行情')">放大 ⤢</button></div>
       <div class="chart-box" id="chart-tradepoints"></div>
     </div>
     <div style="height:32px"></div>`;
@@ -1435,7 +1554,7 @@ function renderTrend(stockId) {
   const cumVals = cumDates.map(d => +(running += cumByDate[d], running.toFixed(2)));
 
   const c1 = echarts.init(document.getElementById('chart-cumprofit'));
-  _trendCharts.push(c1);
+  _trendCharts.push(c1); _trendChartIds.push('chart-cumprofit');
   c1.setOption({
     grid,
     tooltip: { ...tipBase, formatter: p => `${p[0].axisValue}<br/>累计 <b>${p[0].value >= 0 ? '+' : ''}¥${p[0].value}</b>` },
@@ -1459,7 +1578,7 @@ function renderTrend(stockId) {
   const costClrs  = allTrades.map(t => t.type === 'buy' ? th.orange : th.green);
 
   const c2 = echarts.init(document.getElementById('chart-cost'));
-  _trendCharts.push(c2);
+  _trendCharts.push(c2); _trendChartIds.push('chart-cost');
   c2.setOption({
     grid,
     tooltip: { ...tipBase, formatter: p => {
@@ -1484,7 +1603,7 @@ function renderTrend(stockId) {
   const tradeLabels = tTrades.map((_, i) => `#${i + 1}`);
 
   const c3 = echarts.init(document.getElementById('chart-winrate'));
-  _trendCharts.push(c3);
+  _trendCharts.push(c3); _trendChartIds.push('chart-winrate');
   c3.setOption({
     grid,
     tooltip: { ...tipBase, formatter: p => `第 ${p[0].dataIndex + 1} 笔 · ${tTrades[p[0].dataIndex]?.date}<br/>近10笔胜率 <b>${p[0].value}%</b>` },
@@ -1507,26 +1626,67 @@ function renderTrend(stockId) {
 
 // 腾讯日 K 接口：返回 [{date, open, close, high, low, vol}, ...] 或 null
 // 支持三市场：A 股 (sh/sz)、港股 (hk)、美股 (us)
-async function fetchTencentKline(code, count = 90) {
-  let sym = String(code || '').trim().toUpperCase();
+
+// ─── 市场判定与汇率 ────────────────────────────────────────────────────────────
+// 返回 'A'/'HK'/'US'/null，以及该市场的计价币种
+function marketOf(code) {
+  const sym = String(code || '').trim().toUpperCase();
   if (!sym) return null;
-  let prefix;
-  if (/^\d{6}$/.test(sym)) {                          // 6 位数字 → A 股
-    prefix = sym[0] === '6' || sym[0] === '5' ? 'sh' : 'sz';
-  } else if (/^\d{5}$/.test(sym)) {                   // 5 位数字 → 港股
-    prefix = 'hk';
-  } else if (/^[A-Z]{1,5}$/.test(sym)) {              // 1-5 位字母 → 美股
-    prefix = 'us';
-  } else {
-    return null;
+  if (/^\d{6}$/.test(sym)) return 'A';    // A 股
+  if (/^\d{5}$/.test(sym)) return 'HK';   // 港股
+  if (/^[A-Z]{1,5}$/.test(sym)) return 'US';  // 美股
+  return null;
+}
+function tencentSymbol(code) {
+  const m = marketOf(code); if (!m) return null;
+  const sym = String(code).trim().toUpperCase();
+  if (m === 'A') return (sym[0] === '6' || sym[0] === '5' ? 'sh' : 'sz') + sym;
+  if (m === 'HK') return 'hk' + sym;
+  return 'us' + sym;
+}
+function currencyOf(market) {
+  return market === 'HK' ? 'HKD' : market === 'US' ? 'USD' : 'CNY';
+}
+
+// 汇率缓存：12h 内复用，避免重复请求
+let _fxCache = null;  // { ts, USD: {CNY, HKD, ...}, HKD: {CNY, ...} }
+async function fetchFX() {
+  if (_fxCache && Date.now() - _fxCache.ts < 12 * 3600 * 1000) return _fxCache;
+  try {
+    // 拉 USD 与 HKD 为基准的两份 rates
+    const [u, h] = await Promise.all([
+      fetch('https://open.er-api.com/v6/latest/USD').then(r => r.json()),
+      fetch('https://open.er-api.com/v6/latest/HKD').then(r => r.json()),
+    ]);
+    if (u?.result !== 'success' || h?.result !== 'success') throw new Error('fx failed');
+    _fxCache = { ts: Date.now(), USD: u.rates, HKD: h.rates };
+    return _fxCache;
+  } catch (e) {
+    // 兜底用估算汇率（onestep 后用户能看到数字，精确版本下次拉到再覆盖）
+    _fxCache = { ts: 0, USD: { CNY: 7.2, HKD: 7.8 }, HKD: { CNY: 0.92 } };
+    return _fxCache;
   }
-  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${prefix}${sym},day,,,${count},qfq`;
+}
+// 把金额按股票所属市场换算成 CNY；A 股原样返回
+async function toCNY(amount, market) {
+  if (market !== 'HK' && market !== 'US') return amount;
+  const fx = await fetchFX();
+  const cur = currencyOf(market);
+  const rate = (cur === 'USD') ? fx.USD?.CNY : (cur === 'HKD') ? fx.HKD?.CNY : 1;
+  return amount * (rate || 1);
+}
+
+async function fetchTencentKline(code, count = 90) {
+  const prefix = tencentSymbol(code);
+  if (!prefix) return null;
+  const sym = String(code).trim().toUpperCase();
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${prefix},day,,,${count},qfq`;
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
     const j = await res.json();
     // A 股返回 qfqday（前复权），港美市场返回 day（无复权字段）
-    const arr = j?.data?.[`${prefix}${sym}`]?.qfqday || j?.data?.[`${prefix}${sym}`]?.day;
+    const arr = j?.data?.[prefix]?.qfqday || j?.data?.[prefix]?.day;
     if (!Array.isArray(arr)) return null;
     return arr.map(r => ({ date: r[0], open: +r[1], close: +r[2], high: +r[3], low: +r[4], vol: +r[5] }));
   } catch { return null; }
@@ -1559,7 +1719,7 @@ async function renderTradePointsChart(st, allTrades, th, myToken) {
   if (!kline || !kline.length) {
     titleEl.textContent = st.code ? `买卖点位（${st.code} 行情获取失败）` : '买卖点位（请在持仓里填股票代码）';
     const c4 = echarts.init(el);
-    _trendCharts.push(c4);
+    _trendCharts.push(c4); _trendChartIds.push('chart-tradepoints');
     c4.setOption({
       grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
       tooltip: { trigger: 'item', backgroundColor: th.bg, borderColor: th.line, textStyle: { color: th.text1, fontSize: 12 },
@@ -1573,8 +1733,12 @@ async function renderTradePointsChart(st, allTrades, th, myToken) {
       series: [{
         type: 'scatter',
         data: points.map(p => [p.date, p.price, p.kind, p.qty]),
-        symbolSize: p => p[1] ? 8 : 8,
+        symbolSize: 18,
         itemStyle: { color: p => points[p.dataIndex].kind === 'buy' ? th.orange : th.green, opacity: 0.9 },
+        label: {
+          show: true, position: 'inside', formatter: p => p.data[2] === 'buy' ? 'B' : 'S',
+          color: '#fff', fontWeight: 'bold', fontSize: 11,
+        },
       }],
     });
     return;
@@ -1635,13 +1799,15 @@ async function renderTradePointsChart(st, allTrades, th, myToken) {
       },
       {
         name: '加仓/买入', type: 'scatter', data: buyScatter,
-        symbolSize: d => d[4] ? Math.min(10, d[2]/200 + 4) : Math.min(16, d[2]/200 + 6),
+        symbolSize: d => d[4] ? Math.min(14, d[2]/200 + 10) : Math.min(20, d[2]/200 + 14),
         itemStyle: { color: th.orange, opacity: 0.9 },
+        label: { show: true, position: 'inside', formatter: 'B', color: '#fff', fontWeight: 'bold', fontSize: 10 },
       },
       {
         name: '减仓/卖出', type: 'scatter', data: sellScatter,
-        symbolSize: d => d[4] ? Math.min(10, d[2]/200 + 4) : Math.min(16, d[2]/200 + 6),
+        symbolSize: d => d[4] ? Math.min(14, d[2]/200 + 10) : Math.min(20, d[2]/200 + 14),
         itemStyle: { color: th.green, opacity: 0.9 },
+        label: { show: true, position: 'inside', formatter: 'S', color: '#fff', fontWeight: 'bold', fontSize: 10 },
         markLine: { silent: true, symbol: 'none',
           lineStyle: { color: th.text, type: 'dashed', opacity: 0.5 },
           data: [{ yAxis: st.avgCost, label: { formatter: `成本 ¥${fmt(st.avgCost)}`, color: th.text, fontSize: 10 } }] }
