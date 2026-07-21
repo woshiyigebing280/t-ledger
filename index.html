@@ -1506,17 +1506,27 @@ function renderTrend(stockId) {
 }
 
 // 腾讯日 K 接口：返回 [{date, open, close, high, low, vol}, ...] 或 null
+// 支持三市场：A 股 (sh/sz)、港股 (hk)、美股 (us)
 async function fetchTencentKline(code, count = 90) {
-  // 代码格式：6 位数字 → 前缀 sh/sz/sz3（A 股）
-  let sym = String(code || '').trim();
-  if (!/^\d{6}$/.test(sym)) return null;
-  const prefix = sym.startsWith('6') ? 'sh' : (sym.startsWith('5') ? 'sh' : 'sz');
+  let sym = String(code || '').trim().toUpperCase();
+  if (!sym) return null;
+  let prefix;
+  if (/^\d{6}$/.test(sym)) {                          // 6 位数字 → A 股
+    prefix = sym[0] === '6' || sym[0] === '5' ? 'sh' : 'sz';
+  } else if (/^\d{5}$/.test(sym)) {                   // 5 位数字 → 港股
+    prefix = 'hk';
+  } else if (/^[A-Z]{1,5}$/.test(sym)) {              // 1-5 位字母 → 美股
+    prefix = 'us';
+  } else {
+    return null;
+  }
   const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${prefix}${sym},day,,,${count},qfq`;
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
     const j = await res.json();
-    const arr = j?.data?.[`${prefix}${sym}`]?.qfqday;
+    // A 股返回 qfqday（前复权），港美市场返回 day（无复权字段）
+    const arr = j?.data?.[`${prefix}${sym}`]?.qfqday || j?.data?.[`${prefix}${sym}`]?.day;
     if (!Array.isArray(arr)) return null;
     return arr.map(r => ({ date: r[0], open: +r[1], close: +r[2], high: +r[3], low: +r[4], vol: +r[5] }));
   } catch { return null; }
