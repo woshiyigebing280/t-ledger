@@ -1718,6 +1718,13 @@ async function fetchTencentKline(code, count = 90) {
     return arr.map(r => ({ date: r[0], open: +r[1], close: +r[2], high: +r[3], low: +r[4], vol: +r[5] }));
   } catch { return null; }
 }
+// 统一日 K 获取：A 股 / 港股用腾讯；美股数据源每条 K 不全（腾讯覆盖差，其它免费源都需 token）
+// 直接返回 [] 让上层走"只画散点"分支
+async function fetchDailyKline(code, count = 90) {
+  const m = marketOf(code);
+  if (m === 'US') return [];  // 不画美股 K 线
+  return fetchTencentKline(code, count);
+}
 
 async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all') {
   const fresh = () => myToken === _trendRenderToken;  // 异步回来时确认还是当前渲染
@@ -1747,7 +1754,7 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
 
   // 拉行情（可能失败 / 用户没填代码）；K 线天数按 range 决定
   const kCount = range === 'week' ? 14 : range === 'month' ? 45 : 90;
-  const kline = await fetchTencentKline(st.code, kCount);
+  const kline = await fetchDailyKline(st.code, kCount);
   if (!fresh()) return;  // 已被新渲染取代
   // 进一步按 range 起 cutoff 截断 K 线（接口返回的日历日 != 自然天数）
   const trimmed = kline ? kline.filter(k => inRange(k.date)) : null;
