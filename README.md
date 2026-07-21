@@ -54,18 +54,6 @@
 - **编辑面板加「删除该持仓」按钮**（红色，v23）：之前 confirmDeleteStock 函数在但 UI 入口缺失
 - **股票代码支持字母输入**（v23）：iOS 上之前 inputmode="numeric" 导致字母根本进不来
 
-#### ⚠️ 接受现实：美股不画 K 线（v29）
-经过全面实测，公开免费 API 对**美股**支持差：
-- 腾讯对 SPCX（SpaceX 2026-06-12 上市）只返回 1 条
-- 雅虎数据全但 CORS 不开放，浏览器侧 fetch 被拒
-- 新浪 / 网易美股也都是空
-- 所有免费 CORS proxy（allorigins / corsproxy / codetabs / cloudflare test worker）要么挂了要么改付费
-
-按用户偏好采用方案：**美股 K 线直接返回 []**，走"只画 B/S 点位"分支：
-- A 股 / 港股：腾讯 K 线 + B/S 正常叠加
-- **美股**（SPCX / AAPL 等）：只画 B/S 点（基于交易日期），无 K 线背景
-- 之后想给美股画 K 线，路径是部署一个免费 Cloudflare Worker 反代 Yahoo 数据，欢迎回 issue 索取脚本
-
 #### ♻️ 移除全屏图查看器（v17）
 iOS Safari 上各类旋转/resize 方案都不能稳定自适应方向，按用户要求整个功能撤掉。
 
