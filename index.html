@@ -581,7 +581,7 @@ body {
       <div class="form-row">
         <div class="form-group">
           <label class="form-label">股票代码</label>
-          <input class="form-input" id="stock-code" type="text" placeholder="600519 / 00700 / AAPL" inputmode="numeric">
+          <input class="form-input" id="stock-code" type="text" placeholder="600519 / 00700 / AAPL">
         </div>
         <div class="form-group">
           <label class="form-label">股票名称</label>
@@ -600,6 +600,7 @@ body {
       </div>
       <button class="btn btn-primary" onclick="saveStock()">确认</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-stock')">取消</button>
+      <button class="btn btn-danger" id="stock-delete-btn" style="display:none;margin-top:10px" onclick="confirmDeleteStock(currentStockId); closeModal('modal-stock');">删除该持仓</button>
     </div>
   </div>
 </div>
@@ -937,6 +938,7 @@ function setStockFormMode(mode) {
   document.getElementById('stock-form-mode').value = mode;
   const isAdd = mode === 'add';
   document.getElementById('stock-row-price').style.display = isAdd ? '' : 'none';
+  document.getElementById('stock-delete-btn').style.display = isAdd ? 'none' : '';
 }
 function openAddStockModal() {
   document.getElementById('modal-stock-title').textContent = '添加持仓';
