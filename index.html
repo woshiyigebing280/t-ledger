@@ -1789,9 +1789,9 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
   const kLineMap = new Map(trimmed.map(k => [k.date, k]));
   const kData = xDates.map(d => {
     const k = kLineMap.get(d);
-    if (!k) return null;
+    if (!k) return ['-','-','-','-'];  // 用占位符代替 null，避免 ECharts/iOS 在 null 上的拉伸
     // 防御：所有字段必须为有效数值
-    if (isNaN(k.open) || isNaN(k.close) || isNaN(k.low) || isNaN(k.high)) return null;
+    if (isNaN(k.open) || isNaN(k.close) || isNaN(k.low) || isNaN(k.high)) return ['-','-','-','-'];
     return [k.open, k.close, k.low, k.high];
   });
   const xIdx = new Map(xDates.map((d, i) => [d, i]));
@@ -1809,7 +1809,12 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
     c4.setOption({
       grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
       tooltip: { trigger: 'axis', backgroundColor: th.bg, borderColor: th.line, textStyle: { color: th.text1, fontSize: 12 },
-        formatter: params => `${xDates[params[0].dataIndex] || params[0].axisValue}<br/>¥${params[0].value?.[1] ?? '—'}` },
+        formatter: params => {
+          if (!params || !params.length) return '';
+          const p = params.find(x => x && x.value != null) || params[0];
+          if (!p) return '';
+          return `${xDates[p.dataIndex] || p.axisValue}<br/>¥${(p.value && p.value[1]) ?? '—'}`;
+        } },
       xAxis: { type: 'category', data: xDates, boundaryGap: true,
         axisLine: { lineStyle: { color: th.line } }, axisTick: { show: false },
         axisLabel: { fontSize: 10, color: th.text, formatter: v => v.slice(5) } },
@@ -1834,11 +1839,14 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
       ] },
     tooltip: { trigger: 'axis', backgroundColor: th.bg, borderColor: th.line, textStyle: { color: th.text1, fontSize: 12 },
       formatter: params => {
-        const d = xDates[params[0].dataIndex] || params[0].axisValue;
+        if (!params || !params.length) return '';
+        const p0 = params.find(x => x && x.value != null) || params[0];
+        if (!p0) return '';
+        const d = xDates[p0.dataIndex] || p0.axisValue;
         let out = `${d}<br/>`;
         params.forEach(p => {
-          if (p.seriesType === 'candlestick') return;
-          if (p.seriesType === 'scatter') {
+          if (!p || p.seriesType === 'candlestick') return;
+          if (p.seriesType === 'scatter' && p.data) {
             const [, price, qty, , tLike] = p.data;
             out += `${p.marker} ${p.seriesName} ¥${price} × ${qty}股${tLike ? ' (T)' : ''}<br/>`;
           }
