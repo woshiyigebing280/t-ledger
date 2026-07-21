@@ -1784,17 +1784,22 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
   // 有行情 → K 线 + 散点叠加
   // 构建统一时间轴：K 线日期 ∪ trade 日期（去重升序），避免交易被强行"贴"到不相关的 K 上
   const kDatesRaw = trimmed.map(k => k.date);
-  const tradeDates = points.map(p => p.date);
+  const tradeDates = points.map(p => p.date).filter(Boolean).sort();
   const xDates = Array.from(new Set([...kDatesRaw, ...tradeDates])).sort();
   const kLineMap = new Map(trimmed.map(k => [k.date, k]));
   const kData = xDates.map(d => {
     const k = kLineMap.get(d);
-    return k ? [k.open, k.close, k.low, k.high] : null;  // 无 K 线当天用 null 跳过蜡烛
+    if (!k) return null;
+    // 防御：所有字段必须为有效数值
+    if (isNaN(k.open) || isNaN(k.close) || isNaN(k.low) || isNaN(k.high)) return null;
+    return [k.open, k.close, k.low, k.high];
   });
   const xIdx = new Map(xDates.map((d, i) => [d, i]));
 
-  const buyScatter = points.filter(p => p.kind === 'buy').map(p => [xIdx.get(p.date), p.price, p.qty, p.date, p.tLike]);
-  const sellScatter = points.filter(p => p.kind === 'sell').map(p => [xIdx.get(p.date), p.price, p.qty, p.date, p.tLike]);
+  // 过滤 price/qty/x 为 NaN 的脏数据
+  const cleanScatter = arr => arr.filter(d => d && d[0] !== undefined && !isNaN(+d[1]) && !isNaN(+d[2]));
+  const buyScatter = cleanScatter(points.filter(p => p.kind === 'buy').map(p => [xIdx.get(p.date), p.price, p.qty, p.date, p.tLike]));
+  const sellScatter = cleanScatter(points.filter(p => p.kind === 'sell').map(p => [xIdx.get(p.date), p.price, p.qty, p.date, p.tLike]));
 
   // 没买卖点 → 仅画 K 线让用户至少看到行情
   if (buyScatter.length === 0 && sellScatter.length === 0) {
@@ -1897,7 +1902,7 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
   } catch (err) {
     console.warn('[tradepoints] candlestick + scatter 渲染失败，降级纯散点:', err);
     try { c4.dispose(); } catch(e){}
-    titleEl.textContent = `买卖点位（${st.code}）（K 线渲染失败，暂只显示点位）`;
+    titleEl.textContent = `买卖点位（${st.code}） · 降级显示（异常: ${String(err?.message || err).slice(0, 50)}）`;
     const c4b = echarts.init(el);
     _trendCharts.push(c4b); _trendChartIds.push('chart-tradepoints');
     c4b.setOption(buildFallbackOption());
