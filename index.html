@@ -413,6 +413,18 @@ body {
   font-size: 12px; font-weight: 600; color: var(--text2);
   text-transform: uppercase; letter-spacing: 0.5px;
   padding: 0 16px 10px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
+}
+.filter-group { display: inline-flex; gap: 4px; }
+.filter-btn {
+  background: var(--bg); border: 0.5px solid var(--sep);
+  color: var(--text3); font-size: 11px; line-height: 1;
+  padding: 4px 8px; border-radius: 6px; cursor: pointer;
+  text-transform: none; letter-spacing: 0;
+}
+.filter-btn.active {
+  background: var(--accent); color: #fff; border-color: var(--accent);
 }
 .chart-box { width: 100%; height: 200px; }
 </style>
@@ -566,7 +578,7 @@ body {
     <div class="form">
       <input type="hidden" id="stock-edit-id">
       <input type="hidden" id="stock-form-mode" value="add">
-      <div class="form-row" id="stock-row-code">
+      <div class="form-row">
         <div class="form-group">
           <label class="form-label">股票代码</label>
           <input class="form-input" id="stock-code" type="text" placeholder="600519 / 00700 / AAPL" inputmode="numeric">
@@ -585,7 +597,6 @@ body {
           <label class="form-label">当前成本价（元）</label>
           <input class="form-input" id="stock-cost" type="number" placeholder="1500.00" inputmode="decimal" step="0.01">
         </div>
-        <div class="form-hint" id="stock-adjust-hint" style="display:none">填入真实当前持仓数和成本后，历史加仓/减仓/ T 记录会被保留并以这两个值作新基准重新计算。</div>
       </div>
       <button class="btn btn-primary" onclick="saveStock()">确认</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-stock')">取消</button>
@@ -949,16 +960,12 @@ function tradeRow(tr) {
     </div>`;
 }
 
-// ─── Add/Edit/Adjust Stock ────────────────────────────────────────────────────
+// ─── Add/Edit Stock ────────────────────────────────────────────────────────────
 function setStockFormMode(mode) {
-  // mode: 'add' / 'edit' / 'adjust'
+  // mode: 'add'（显示全部字段）/ 'edit'（只显示代码/名称）
   document.getElementById('stock-form-mode').value = mode;
-  // 行内字段显隐
-  const showCode = mode === 'add' || mode === 'edit';
-  const showPrice = mode === 'add' || mode === 'adjust';
-  document.getElementById('stock-row-code').style.display = showCode ? '' : 'none';
-  document.getElementById('stock-row-price').style.display = showPrice ? '' : 'none';
-  document.getElementById('stock-adjust-hint').style.display = mode === 'adjust' ? '' : 'none';
+  const isAdd = mode === 'add';
+  document.getElementById('stock-row-price').style.display = isAdd ? '' : 'none';
 }
 function openAddStockModal() {
   document.getElementById('modal-stock-title').textContent = '添加持仓';
@@ -982,43 +989,14 @@ function openEditStockModal() {
   setStockFormMode('edit');
   openModal('modal-stock');
 }
-function openAdjustStockModal() {
-  const st = state.stocks.find(s => s.id === currentStockId);
-  if (!st) return;
-  document.getElementById('modal-stock-title').textContent = '调整持仓基准';
-  document.getElementById('stock-edit-id').value = st.id;
-  document.getElementById('stock-shares').value = st.shares;
-  document.getElementById('stock-cost').value = fmt(st.avgCost);
-  setStockFormMode('adjust');
-  openModal('modal-stock');
-}
 function saveStock() {
   const editId = document.getElementById('stock-edit-id').value;
-  const mode = document.getElementById('stock-form-mode').value;
-
-  if (mode === 'adjust') {
-    // 仅更新持仓基准：股数 + 成本，trades 保留，recompute 用新基准
-    const shares = parseFloat(document.getElementById('stock-shares').value);
-    const avgCost = parseFloat(document.getElementById('stock-cost').value);
-    if (isNaN(shares) || shares < 0) return alert('请填写正确的持仓股数');
-    if (isNaN(avgCost) || avgCost <= 0) return alert('请填写正确的成本价');
-    const st = state.stocks.find(s => s.id === editId);
-    if (st) {
-      st.initialShares = shares; st.initialCost = avgCost;
-      recomputeStock(st);
-      save();
-    }
-    closeModal('modal-stock');
-    renderDetail(editId);
-    return;
-  }
-
   const code = document.getElementById('stock-code').value.trim();
   const name = document.getElementById('stock-name').value.trim();
   if (!name) return alert('请填写股票名称');
 
-  if (mode === 'edit') {
-    // 仅更新代码/名称，股数/成本保持不动
+  if (editId) {
+    // 编辑模式：仅改代码 / 名称（股数/成本不在此处改，请用加仓 / 减仓 / T 操作)
     const st = state.stocks.find(s => s.id === editId);
     if (st) { st.code = code; st.name = name; }
     save();
@@ -1027,7 +1005,7 @@ function saveStock() {
     return;
   }
 
-  // mode === 'add'：新增持仓
+  // 添加模式：四字段都要填
   const shares = parseFloat(document.getElementById('stock-shares').value);
   const avgCost = parseFloat(document.getElementById('stock-cost').value);
   if (isNaN(shares) || shares <= 0) return alert('请填写正确的持仓股数');
@@ -1044,7 +1022,6 @@ function openDetailFab() {
   const actions = [
     { label: '记录 T 操作（高抛低吸）', action: openAddTradeModal },
     { label: '加仓（新买入股票）', action: openAddBuyModal },
-    { label: '调整持仓基准（股数 / 成本）', action: openAdjustStockModal },
   ];
   if (st && st.shares > 0) actions.push({ label: '卖出减仓', action: openAddSellModal });
   showActionSheet(actions);
@@ -1452,6 +1429,7 @@ function renderTrend(stockId) {
   if (!st) return;
   clearTrendCharts();
   const myToken = ++_trendRenderToken;  // 防 async 竞态：旧渲染回来发现 token 不符就 noop
+  let currentRange = 'all';              // 买卖点位图筛选档位
 
   const tTrades = (st.trades || [])
     .filter(t => !t.type || t.type === 't')
@@ -1502,7 +1480,14 @@ function renderTrend(stockId) {
       <div class="chart-box" id="chart-winrate"></div>
     </div>
     <div class="chart-card">
-      <div class="chart-card-title" id="chart-tradepoints-title">买卖点位 + 行情</div>
+      <div class="chart-card-title">
+        <span id="chart-tradepoints-title-text">买卖点位 + 行情</span>
+        <span class="filter-group" id="tradepoints-filter">
+          <button class="filter-btn active" data-range="all">全部</button>
+          <button class="filter-btn" data-range="month">近1月</button>
+          <button class="filter-btn" data-range="week">近1周</button>
+        </span>
+      </div>
       <div class="chart-box" id="chart-tradepoints"></div>
     </div>
     <div style="height:32px"></div>`;
@@ -1597,7 +1582,20 @@ function renderTrend(stockId) {
   });
 
   // ── Chart 4: 买卖点位 + 行情 (异步) ─────────────────────────────────────────
-  renderTradePointsChart(st, allTrades, th, myToken);
+  renderTradePointsChart(st, allTrades, th, myToken, currentRange);
+  // 绑定筛选按钮事件（range 切换时只重画这一张图）
+  document.querySelectorAll('#tradepoints-filter .filter-btn').forEach(btn => {
+    btn.onclick = () => {
+      currentRange = btn.dataset.range;
+      // 视觉态：active class 互斥
+      document.querySelectorAll('#tradepoints-filter .filter-btn').forEach(b => b.classList.toggle('active', b === btn));
+      // 重画前先把旧的 chart-tradepoints 实例 dispose（避免重复 init 累积）
+      const i = _trendChartIds.lastIndexOf('chart-tradepoints');
+      if (i >= 0 && _trendCharts[i]) { try { _trendCharts[i].dispose(); } catch(e){} }
+      _trendCharts.splice(i, 1); _trendChartIds.splice(i, 1);
+      renderTradePointsChart(st, allTrades, th, myToken, currentRange);
+    };
+  });
 }
 
 // 腾讯日 K 接口：返回 [{date, open, close, high, low, vol}, ...] 或 null
@@ -1668,15 +1666,22 @@ async function fetchTencentKline(code, count = 90) {
   } catch { return null; }
 }
 
-async function renderTradePointsChart(st, allTrades, th, myToken) {
+async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all') {
   const fresh = () => myToken === _trendRenderToken;  // 异步回来时确认还是当前渲染
   const el = document.getElementById('chart-tradepoints');
-  const titleEl = document.getElementById('chart-tradepoints-title');
+  const titleEl = document.getElementById('chart-tradepoints-title-text');
   if (!el || !fresh()) return;
 
+  // range → 最近 N 天（包含开/闭日期区间）
+  const sinceMs = range === 'week' ? Date.now() - 7 * 86400e3
+                : range === 'month' ? Date.now() - 30 * 86400e3
+                : 0;
+  const inRange = d => !sinceMs || (new Date(d).getTime() >= sinceMs);
+
   // 收集买卖点位
-  const points = [];  // {date, price, kind: 'buy' | 'sell', qty, size}
+  const points = [];  // {date, price, kind: 'buy' | 'sell', qty, size, tLike}
   allTrades.forEach(tr => {
+    if (!inRange(tr.date)) return;
     if (tr.type === 'buy') {
       points.push({ date: tr.date, price: tr.price, kind: 'buy', qty: tr.qty, size: Math.min(16, 6 + tr.qty/200) });
     } else if (tr.type === 'sell') {
@@ -1687,12 +1692,15 @@ async function renderTradePointsChart(st, allTrades, th, myToken) {
     }
   });
 
-  // 拉行情（可能失败 / 用户没填代码）
-  const kline = await fetchTencentKline(st.code);
+  // 拉行情（可能失败 / 用户没填代码）；K 线天数按 range 决定
+  const kCount = range === 'week' ? 14 : range === 'month' ? 45 : 90;
+  const kline = await fetchTencentKline(st.code, kCount);
   if (!fresh()) return;  // 已被新渲染取代
+  // 进一步按 range 起 cutoff 截断 K 线（接口返回的日历日 != 自然天数）
+  const trimmed = kline ? kline.filter(k => inRange(k.date)) : null;
 
   // 没行情 → 只画点，标题改一下
-  if (!kline || !kline.length) {
+  if (!trimmed || !trimmed.length) {
     titleEl.textContent = st.code ? `买卖点位（${st.code} 行情获取失败）` : '买卖点位（请在持仓里填股票代码）';
     const c4 = echarts.init(el);
     _trendCharts.push(c4); _trendChartIds.push('chart-tradepoints');
@@ -1722,8 +1730,8 @@ async function renderTradePointsChart(st, allTrades, th, myToken) {
 
   // 有行情 → K 线 + 散点叠加
   // K 线日期映射（用作 X 轴）
-  const kDates = kline.map(k => k.date);
-  const kData = kline.map(k => [k.open, k.close, k.low, k.high]);
+  const kDates = trimmed.map(k => k.date);
+  const kData = trimmed.map(k => [k.open, k.close, k.low, k.high]);
 
   // 把买卖点对齐到 X 轴索引（若当天没有 K 线，找最近的）
   const dateIndex = new Map(kDates.map((d, i) => [d, i]));
