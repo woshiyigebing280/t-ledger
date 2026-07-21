@@ -1782,26 +1782,22 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
   }
 
   // 有行情 → K 线 + 散点叠加
-  // K 线日期映射（用作 X 轴）
-  const kDates = trimmed.map(k => k.date);
-  const kData = trimmed.map(k => [k.open, k.close, k.low, k.high]);
+  // 构建统一时间轴：K 线日期 ∪ trade 日期（去重升序），避免交易被强行"贴"到不相关的 K 上
+  const kDatesRaw = trimmed.map(k => k.date);
+  const tradeDates = points.map(p => p.date);
+  const xDates = Array.from(new Set([...kDatesRaw, ...tradeDates])).sort();
+  const kLineMap = new Map(trimmed.map(k => [k.date, k]));
+  const kData = xDates.map(d => {
+    const k = kLineMap.get(d);
+    return k ? [k.open, k.close, k.low, k.high] : null;  // 无 K 线当天用 null 跳过蜡烛
+  });
+  const xIdx = new Map(xDates.map((d, i) => [d, i]));
 
-  // 把买卖点对齐到 X 轴索引（若当天没有 K 线，找最近的）
-  const dateIndex = new Map(kDates.map((d, i) => [d, i]));
-  function nearestIdx(date) {
-    if (dateIndex.has(date)) return dateIndex.get(date);
-    // 升序里找最接近
-    for (let i = 0; i < kDates.length; i++) {
-      if (kDates[i] >= date) return i;
-    }
-    return kDates.length - 1;
-  }
-
-  const buyScatter = points.filter(p => p.kind === 'buy').map(p => [nearestIdx(p.date), p.price, p.qty, p.date, p.tLike]);
-  const sellScatter = points.filter(p => p.kind === 'sell').map(p => [nearestIdx(p.date), p.price, p.qty, p.date, p.tLike]);
+  const buyScatter = points.filter(p => p.kind === 'buy').map(p => [xIdx.get(p.date), p.price, p.qty, p.date, p.tLike]);
+  const sellScatter = points.filter(p => p.kind === 'sell').map(p => [xIdx.get(p.date), p.price, p.qty, p.date, p.tLike]);
 
   const c4 = echarts.init(el);
-  _trendCharts.push(c4);
+  _trendCharts.push(c4); _trendChartIds.push('chart-tradepoints');
   c4.setOption({
     grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
     legend: { top: 0, right: 8, textStyle: { color: th.text, fontSize: 10 },
@@ -1812,10 +1808,10 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
       ] },
     tooltip: { trigger: 'axis', backgroundColor: th.bg, borderColor: th.line, textStyle: { color: th.text1, fontSize: 12 },
       formatter: params => {
-        const d = kDates[params[0].dataIndex] || params[0].axisValue;
+        const d = xDates[params[0].dataIndex] || params[0].axisValue;
         let out = `${d}<br/>`;
         params.forEach(p => {
-          if (p.seriesType === 'candlestick') return;  // K 线下一次显示太长，跳过
+          if (p.seriesType === 'candlestick') return;
           if (p.seriesType === 'scatter') {
             const [, price, qty, , tLike] = p.data;
             out += `${p.marker} ${p.seriesName} ¥${price} × ${qty}股${tLike ? ' (T)' : ''}<br/>`;
@@ -1823,7 +1819,7 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
         });
         return out;
       } },
-    xAxis: { type: 'category', data: kDates, boundaryGap: true,
+    xAxis: { type: 'category', data: xDates, boundaryGap: true,
       axisLine: { lineStyle: { color: th.line } }, axisTick: { show: false },
       axisLabel: { fontSize: 10, color: th.text, formatter: v => v.slice(5) } },
     yAxis: { type: 'value', scale: true,
