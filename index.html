@@ -605,17 +605,18 @@ body {
     <div class="modal-title" id="modal-stock-title">添加持仓</div>
     <div class="form">
       <input type="hidden" id="stock-edit-id">
-      <div class="form-row">
+      <input type="hidden" id="stock-form-mode" value="add">
+      <div class="form-row" id="stock-row-code">
         <div class="form-group">
           <label class="form-label">股票代码</label>
-          <input class="form-input" id="stock-code" type="text" placeholder="600519" inputmode="numeric" maxlength="6">
+          <input class="form-input" id="stock-code" type="text" placeholder="600519 / 00700 / AAPL" inputmode="numeric">
         </div>
         <div class="form-group">
           <label class="form-label">股票名称</label>
           <input class="form-input" id="stock-name" type="text" placeholder="贵州茅台">
         </div>
       </div>
-      <div class="form-row">
+      <div class="form-row" id="stock-row-price">
         <div class="form-group">
           <label class="form-label">持仓股数（股）</label>
           <input class="form-input" id="stock-shares" type="number" placeholder="1000" inputmode="decimal" min="0">
@@ -624,6 +625,7 @@ body {
           <label class="form-label">当前成本价（元）</label>
           <input class="form-input" id="stock-cost" type="number" placeholder="1500.00" inputmode="decimal" step="0.01">
         </div>
+        <div class="form-hint" id="stock-adjust-hint" style="display:none">填入真实当前持仓数和成本后，历史加仓/减仓/ T 记录会被保留并以这两个值作新基准重新计算。</div>
       </div>
       <button class="btn btn-primary" onclick="saveStock()">确认</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-stock')">取消</button>
@@ -987,7 +989,17 @@ function tradeRow(tr) {
     </div>`;
 }
 
-// ─── Add/Edit Stock ───────────────────────────────────────────────────────────
+// ─── Add/Edit/Adjust Stock ────────────────────────────────────────────────────
+function setStockFormMode(mode) {
+  // mode: 'add' / 'edit' / 'adjust'
+  document.getElementById('stock-form-mode').value = mode;
+  // 行内字段显隐
+  const showCode = mode === 'add' || mode === 'edit';
+  const showPrice = mode === 'add' || mode === 'adjust';
+  document.getElementById('stock-row-code').style.display = showCode ? '' : 'none';
+  document.getElementById('stock-row-price').style.display = showPrice ? '' : 'none';
+  document.getElementById('stock-adjust-hint').style.display = mode === 'adjust' ? '' : 'none';
+}
 function openAddStockModal() {
   document.getElementById('modal-stock-title').textContent = '添加持仓';
   document.getElementById('stock-edit-id').value = '';
@@ -995,6 +1007,7 @@ function openAddStockModal() {
   document.getElementById('stock-name').value = '';
   document.getElementById('stock-shares').value = '';
   document.getElementById('stock-cost').value = '';
+  setStockFormMode('add');
   openModal('modal-stock');
 }
 function openEditStockModal() {
@@ -1006,38 +1019,63 @@ function openEditStockModal() {
   document.getElementById('stock-name').value = st.name;
   document.getElementById('stock-shares').value = st.shares;
   document.getElementById('stock-cost').value = fmt(st.avgCost);
+  setStockFormMode('edit');
+  openModal('modal-stock');
+}
+function openAdjustStockModal() {
+  const st = state.stocks.find(s => s.id === currentStockId);
+  if (!st) return;
+  document.getElementById('modal-stock-title').textContent = '调整持仓基准';
+  document.getElementById('stock-edit-id').value = st.id;
+  document.getElementById('stock-shares').value = st.shares;
+  document.getElementById('stock-cost').value = fmt(st.avgCost);
+  setStockFormMode('adjust');
   openModal('modal-stock');
 }
 function saveStock() {
   const editId = document.getElementById('stock-edit-id').value;
-  const code = document.getElementById('stock-code').value.trim();
-  const name = document.getElementById('stock-name').value.trim();
-  const shares = parseFloat(document.getElementById('stock-shares').value);
-  const avgCost = parseFloat(document.getElementById('stock-cost').value);
+  const mode = document.getElementById('stock-form-mode').value;
 
-  if (!name) return alert('请填写股票名称');
-  if (isNaN(shares) || shares <= 0) return alert('请填写正确的持仓股数');
-  if (isNaN(avgCost) || avgCost <= 0) return alert('请填写正确的成本价');
-
-  if (editId) {
+  if (mode === 'adjust') {
+    // 仅更新持仓基准：股数 + 成本，trades 保留，recompute 用新基准
+    const shares = parseFloat(document.getElementById('stock-shares').value);
+    const avgCost = parseFloat(document.getElementById('stock-cost').value);
+    if (isNaN(shares) || shares < 0) return alert('请填写正确的持仓股数');
+    if (isNaN(avgCost) || avgCost <= 0) return alert('请填写正确的成本价');
     const st = state.stocks.find(s => s.id === editId);
     if (st) {
-      // 编辑持仓 = 重新设定基准（视为"真实的当前状态"），trades 保持但旧快照会通过重算刷新
-      st.code = code; st.name = name;
-      st.shares = shares; st.avgCost = avgCost;
       st.initialShares = shares; st.initialCost = avgCost;
       recomputeStock(st);
+      save();
     }
-  } else {
-    state.stocks.push({ id: uid(), code, name, shares, avgCost, initialShares: shares, initialCost: avgCost, totalTProfit: 0, trades: [] });
+    closeModal('modal-stock');
+    renderDetail(editId);
+    return;
   }
+
+  const code = document.getElementById('stock-code').value.trim();
+  const name = document.getElementById('stock-name').value.trim();
+  if (!name) return alert('请填写股票名称');
+
+  if (mode === 'edit') {
+    // 仅更新代码/名称，股数/成本保持不动
+    const st = state.stocks.find(s => s.id === editId);
+    if (st) { st.code = code; st.name = name; }
+    save();
+    closeModal('modal-stock');
+    renderDetail(editId);
+    return;
+  }
+
+  // mode === 'add'：新增持仓
+  const shares = parseFloat(document.getElementById('stock-shares').value);
+  const avgCost = parseFloat(document.getElementById('stock-cost').value);
+  if (isNaN(shares) || shares <= 0) return alert('请填写正确的持仓股数');
+  if (isNaN(avgCost) || avgCost <= 0) return alert('请填写正确的成本价');
+  state.stocks.push({ id: uid(), code, name, shares, avgCost, initialShares: shares, initialCost: avgCost, totalTProfit: 0, trades: [] });
   save();
   closeModal('modal-stock');
-  if (editId) {
-    renderDetail(editId);
-  } else {
-    renderHome();
-  }
+  renderHome();
 }
 
 // ─── Detail FAB ───────────────────────────────────────────────────────────────
@@ -1046,6 +1084,7 @@ function openDetailFab() {
   const actions = [
     { label: '记录 T 操作（高抛低吸）', action: openAddTradeModal },
     { label: '加仓（新买入股票）', action: openAddBuyModal },
+    { label: '调整持仓基准（股数 / 成本）', action: openAdjustStockModal },
   ];
   if (st && st.shares > 0) actions.push({ label: '卖出减仓', action: openAddSellModal });
   showActionSheet(actions);
