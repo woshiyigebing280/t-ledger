@@ -660,6 +660,7 @@ body {
     <div class="form">
       <button class="btn btn-ghost" onclick="exportData()" style="margin-bottom:10px">导出数据 (JSON)</button>
       <button class="btn btn-ghost" onclick="document.getElementById('import-file').click()" style="margin-bottom:10px">导入数据 (JSON)</button>
+      <button class="btn btn-ghost" onclick="refreshFX()" style="margin-bottom:10px">刷新汇率快照</button>
       <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">
       <button class="btn btn-danger" onclick="confirmClearAll()">清空所有数据</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-data')">关闭</button>
@@ -746,9 +747,9 @@ function renderHome() {
   const pc = profitClass(totalProfit);
   const hasForeign = stocks.some(s => { const m = marketOf(s.code); return m === 'HK' || m === 'US'; });
   const fx = state.fxSnapshot;
-  const fxLabel = (hasForeign && fx && fx.ts)
-    ? `<div style="font-size:11px;color:var(--text3);margin-top:6px">汇率快照 ¥${fmt(fx.rUSD)}/$ · ¥${fmt(fx.rHKD)}/HK$（${new Date(fx.ts).toLocaleDateString('zh-CN')}）</div>`
-    : '';
+  const fxLabel = (hasForeign && fx)
+    ? `<div style="font-size:11px;color:var(--text3);margin-top:6px">汇率快照 ¥${fmt(fx.rUSD)}/$ · ¥${fmt(fx.rHKD)}/HK$${fx.ts ? '（' + new Date(fx.ts).toLocaleDateString('zh-CN') + '）' : '（兜底估算，点「刷新汇率快照」更新）'}</div>`
+    : (hasForeign ? '<div style="font-size:11px;color:var(--text3);margin-top:6px">汇率快照未就绪 · 打开「管理」点「刷新汇率快照」</div>' : '');
 
   document.getElementById('home-summary').innerHTML = `
     <div class="summary">
@@ -1271,18 +1272,13 @@ function deleteTrade(stockId, tradeId) {
 // 老数据迁移：如果 trade 没有 profitCNY，按当前 fxSnapshot 一次性换算填上。
 // 同时重算 st.totalTProfit（旧版可能是原币值）。
 async function migrateLegacyFx() {
-  // 没有港美股 → 跳过（A 股无换算）
-  const need = state.stocks.some(s => {
-    const m = marketOf(s.code);
-    return (m === 'HK' || m === 'US') && (s.trades || []).some(t => t.profitCNY === undefined);
-  });
-  // 也需要确认 fxSnapshot 存在
-  if (!state.fxSnapshot || state.fxSnapshot.ts === 0) await fetchFX();
-  // 把 A 股的 trade.profitCNY 同步 = profit（如果没设过的话）
+  // 任何状态下都先确保 fxSnapshot 存在（拉一次或用兜底）
+  if (!state.fxSnapshot || !state.fxSnapshot.ts) await fetchFX();
+  if (!state.fxSnapshot) state.fxSnapshot = { ts: 0, rUSD: 7.2, rHKD: 0.92 };
   for (const st of state.stocks) {
     const m = marketOf(st.code);
-    const fx = (m === 'US') ? (state.fxSnapshot?.rUSD || 7.2)
-              : (m === 'HK') ? (state.fxSnapshot?.rHKD || 0.92)
+    const fx = (m === 'US') ? state.fxSnapshot.rUSD
+              : (m === 'HK') ? state.fxSnapshot.rHKD
               : 1;
     for (const tr of (st.trades || [])) {
       if (tr.type === 'buy') continue;
@@ -1623,6 +1619,7 @@ let _fxCache = null;
 async function fetchFX() {
   // 内存缓存 12h；同时维护 state.fxSnapshot 用于持久化
   if (_fxCache && Date.now() - _fxCache.ts < 12 * 3600 * 1000) return _fxCache;
+  const fallback = { ts: 0, rUSD: 7.2, rHKD: 0.92 };
   try {
     const [u, h] = await Promise.all([
       fetch('https://open.er-api.com/v6/latest/USD').then(r => r.json()),
@@ -1630,13 +1627,34 @@ async function fetchFX() {
     ]);
     if (u?.result !== 'success' || h?.result !== 'success') throw new Error('fx failed');
     _fxCache = { ts: Date.now(), rUSD: u.rates.CNY || 7.2, rHKD: h.rates.CNY || 0.92 };
-    state.fxSnapshot = { ts: _fxCache.ts, rUSD: _fxCache.rUSD, rHKD: _fxCache.rHKD };
-    save();
-    return _fxCache;
   } catch (e) {
-    _fxCache = { ts: 0, rUSD: 7.2, rHKD: 0.92 };
-    return _fxCache;
+    _fxCache = fallback;
+    console.warn('[fx] 拉汇率失败，使用兜底值:', e);
   }
+  // 不论成功失败都持久化（兜底也写，避免 state.fxSnapshot 长期为 null 影响显示）
+  state.fxSnapshot = { ts: _fxCache.ts, rUSD: _fxCache.rUSD, rHKD: _fxCache.rHKD };
+  save();
+  return _fxCache;
+}
+// 当前市场汇率：港美股拉(fetchFX)、A 股 / 未知返回 1
+async function fxForMarket(market) {
+  if (market !== 'HK' && market !== 'US') return 1;
+  const fx = await fetchFX();
+  return market === 'US' ? fx.rUSD : fx.rHKD;
+}
+// 手动触发刷新汇率（数据管理面板按钮）
+async function refreshFX() {
+  alert('正在拉取最新汇率…');
+  _fxCache = null;  // 强制不命中缓存
+  const fx = await fetchFX();
+  if (fx.ts > 0) {
+    alert(`已更新：¥${fx.rUSD.toFixed(4)}/$ · ¥${fx.rHKD.toFixed(4)}/HK$（${new Date(fx.ts).toLocaleString('zh-CN')}）`);
+  } else {
+    alert('拉取失败（网络或接口问题），已使用兜底汇率 ¥7.2/$、¥0.92/HK$。下次有网会自动重试。');
+  }
+  // 重算现有 trade 的 profitCNY（让用户下次看到准确值）
+  await migrateLegacyFx();
+  renderHome();
 }
 // 当前市场汇率：港美股拉(fetchFX)、A 股 / 未知返回 1
 // 注：永远返回最新汇率（用于新交易发生时换算，并写进 trade.profitCNY 作为快照）
@@ -1809,7 +1827,9 @@ if ('serviceWorker' in navigator) {
 // 后台异步迁移老数据（无 fxSnapshot 或有未换算 trade 时触发）；不阻塞首屏渲染
 async function startupMigrate() {
   const stocks = state.stocks || [];
+  const hasForeign = stocks.some(s => { const m = marketOf(s.code); return m === 'HK' || m === 'US'; });
   const needsMigration = !state.fxSnapshot
+    || (hasForeign && !state.fxSnapshot.ts)
     || stocks.some(s => (s.trades || []).some(t => t.profitCNY === undefined && t.type !== 'buy'));
   if (!needsMigration) return;
   await migrateLegacyFx();
