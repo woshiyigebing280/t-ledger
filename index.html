@@ -440,7 +440,7 @@ body {
   background: var(--bg2); border: none; border-radius: 14px;
   padding: 4px 12px; font-size: 12px; color: var(--text1); cursor: pointer;
 }
-.chart-fullscreen .fs-box { flex: 1; width: 100%; min-height: 0; }
+.chart-fullscreen .fs-box { flex: 1; width: 100%; min-height: 200px; }
 .chart-fullscreen .fs-hint {
   text-align: center; color: var(--text3); font-size: 11px;
   padding: 6px; flex-shrink: 0;
@@ -1469,33 +1469,44 @@ function getChartInstanceById(id) {
   const i = _trendChartIds.indexOf(id);
   return i >= 0 ? _trendCharts[i] : null;
 }
-// 全屏图查看器：竖屏提醒用户转动，转后自动按横屏铺满（无 CSS 旋转，跨 iOS/Safari 稳定）
+// 全屏图查看器：竖屏提醒用户转动，转后自动按横屏铺满
+let _fsSrc = null;       // 原 chart 实例，供重画
 let _onOrientResize = null;
+function drawFullscreen() {
+  if (!_fsSrc) return;
+  if (_fsChart) { try { _fsChart.dispose(); _fsChart = null; } catch(e){} }
+  const opt = JSON.parse(JSON.stringify(_fsSrc.getOption(),
+    (k, v) => typeof v === 'function' ? null : v));
+  _fsChart = echarts.init(document.getElementById('fs-box'));
+  _fsChart.setOption(opt);
+  _fsChart.setOption({ textStyle: { fontSize: 13 } });
+}
 function openChartFullscreen(id, title) {
   const src = getChartInstanceById(id);
   if (!src) return;
   const el = document.getElementById('chart-fullscreen');
   document.getElementById('fs-title').textContent = title || id;
   el.classList.add('open');
-  // 竖屏打开时先提示用户转横屏；横屏打开直接画
+  _fsSrc = src;
+  // 提示文案
   if (window.matchMedia('(orientation: portrait)').matches) {
-    document.getElementById('fs-hint').textContent = '🔁 请将手机横置以更好的查看';
+    document.getElementById('fs-hint').textContent = '🔁 请将手机横置以便查看';
   } else {
     document.getElementById('fs-hint').textContent = '双指捏合缩放';
   }
-  drawFullscreen(src);
-  // 监听设备旋转，自动 resize echarts 以铺满新尺寸
-  _onOrientResize = () => { if (_fsChart) _fsChart.resize(); };
+  // 让浏览器先把 .open 的 layout 算出来再 init（否则 fs-box 尺寸可能为 0）
+  requestAnimationFrame(() => requestAnimationFrame(drawFullscreen));
+  // 旋转 → dispose + 重画（resize 在容器剧烈变化时不可靠）
+  _onOrientResize = () => {
+    if (window.matchMedia('(orientation: portrait)').matches) {
+      document.getElementById('fs-hint').textContent = '🔁 请将手机横置以便查看';
+    } else {
+      document.getElementById('fs-hint').textContent = '双指捏合缩放';
+    }
+    drawFullscreen();
+  };
   window.addEventListener('resize', _onOrientResize);
   window.addEventListener('orientationchange', _onOrientResize);
-}
-function drawFullscreen(src) {
-  if (_fsChart) { try { _fsChart.dispose(); } catch(e){} }
-  const opt = JSON.parse(JSON.stringify(src.getOption(),
-    (k, v) => typeof v === 'function' ? null : v));
-  _fsChart = echarts.init(document.getElementById('fs-box'));
-  _fsChart.setOption(opt);
-  _fsChart.setOption({ textStyle: { fontSize: 13 } });
 }
 function closeChartFullscreen() {
   const el = document.getElementById('chart-fullscreen');
@@ -1506,6 +1517,7 @@ function closeChartFullscreen() {
     _onOrientResize = null;
   }
   if (_fsChart) { try { _fsChart.dispose(); } catch(e){} _fsChart = null; }
+  _fsSrc = null;
   document.getElementById('fs-hint').textContent = '双指捏合缩放';
 }
 function chartTheme() {
