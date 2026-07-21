@@ -1324,6 +1324,7 @@ document.getElementById('action-sheet').addEventListener('click', e => {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 // ─── Trend View ──────────────────────────────────────────────────────────────
 let _trendCharts = [];
+let _trendRenderToken = 0;  // 防 async 竞态：每次 renderTrend 自增，async 回来比对
 function clearTrendCharts() {
   _trendCharts.forEach(c => { try { c.dispose(); } catch(e){} });
   _trendCharts = [];
@@ -1355,6 +1356,7 @@ function renderTrend(stockId) {
   const st = state.stocks.find(s => s.id === stockId);
   if (!st) return;
   clearTrendCharts();
+  const myToken = ++_trendRenderToken;  // 防 async 竞态：旧渲染回来发现 token 不符就 noop
 
   const tTrades = (st.trades || [])
     .filter(t => !t.type || t.type === 't')
@@ -1403,6 +1405,10 @@ function renderTrend(stockId) {
     <div class="chart-card">
       <div class="chart-card-title">胜率滚动趋势（近10笔）</div>
       <div class="chart-box" id="chart-winrate"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-card-title" id="chart-tradepoints-title">买卖点位 + 行情</div>
+      <div class="chart-box" id="chart-tradepoints"></div>
     </div>
     <div style="height:32px"></div>`;
 
@@ -1493,6 +1499,144 @@ function renderTrend(stockId) {
         lineStyle: { color: th.text, type: 'dashed', opacity: 0.4 },
         data: [{ yAxis: 50, label: { formatter: '50%', color: th.text, fontSize: 10 } }] }
     }],
+  });
+
+  // ── Chart 4: 买卖点位 + 行情 (异步) ─────────────────────────────────────────
+  renderTradePointsChart(st, allTrades, th, myToken);
+}
+
+// 腾讯日 K 接口：返回 [{date, open, close, high, low, vol}, ...] 或 null
+async function fetchTencentKline(code, count = 90) {
+  // 代码格式：6 位数字 → 前缀 sh/sz/sz3（A 股）
+  let sym = String(code || '').trim();
+  if (!/^\d{6}$/.test(sym)) return null;
+  const prefix = sym.startsWith('6') ? 'sh' : (sym.startsWith('5') ? 'sh' : 'sz');
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${prefix}${sym},day,,,${count},qfq`;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const j = await res.json();
+    const arr = j?.data?.[`${prefix}${sym}`]?.qfqday;
+    if (!Array.isArray(arr)) return null;
+    return arr.map(r => ({ date: r[0], open: +r[1], close: +r[2], high: +r[3], low: +r[4], vol: +r[5] }));
+  } catch { return null; }
+}
+
+async function renderTradePointsChart(st, allTrades, th, myToken) {
+  const fresh = () => myToken === _trendRenderToken;  // 异步回来时确认还是当前渲染
+  const el = document.getElementById('chart-tradepoints');
+  const titleEl = document.getElementById('chart-tradepoints-title');
+  if (!el || !fresh()) return;
+
+  // 收集买卖点位
+  const points = [];  // {date, price, kind: 'buy' | 'sell', qty, size}
+  allTrades.forEach(tr => {
+    if (tr.type === 'buy') {
+      points.push({ date: tr.date, price: tr.price, kind: 'buy', qty: tr.qty, size: Math.min(16, 6 + tr.qty/200) });
+    } else if (tr.type === 'sell') {
+      points.push({ date: tr.date, price: tr.price, kind: 'sell', qty: tr.qty, size: Math.min(16, 6 + tr.qty/200) });
+    } else {  // T 操作：分别画卖/买两个点
+      points.push({ date: tr.date, price: tr.sell, kind: 'sell', qty: tr.qty, size: Math.min(12, 4 + tr.qty/200), tLike: true });
+      points.push({ date: tr.date, price: tr.buy,  kind: 'buy',  qty: tr.qty, size: Math.min(12, 4 + tr.qty/200), tLike: true });
+    }
+  });
+
+  // 拉行情（可能失败 / 用户没填代码）
+  const kline = await fetchTencentKline(st.code);
+  if (!fresh()) return;  // 已被新渲染取代
+
+  // 没行情 → 只画点，标题改一下
+  if (!kline || !kline.length) {
+    titleEl.textContent = st.code ? `买卖点位（${st.code} 行情获取失败）` : '买卖点位（请在持仓里填股票代码）';
+    const c4 = echarts.init(el);
+    _trendCharts.push(c4);
+    c4.setOption({
+      grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
+      tooltip: { trigger: 'item', backgroundColor: th.bg, borderColor: th.line, textStyle: { color: th.text1, fontSize: 12 },
+        formatter: p => `${p.data[0]}<br/>¥${p.data[1]} · ${p.data[2]==='buy'?'买':'卖'} · ${p.data[3]}股` },
+      xAxis: { type: 'category', data: points.map(p=>p.date).sort(),
+        axisLine: { lineStyle: { color: th.line } }, axisTick: { show: false },
+        axisLabel: { fontSize: 10, color: th.text, formatter: v => v.slice(5) } },
+      yAxis: { type: 'value', scale: true,
+        splitLine: { lineStyle: { color: th.line } },
+        axisLabel: { fontSize: 10, color: th.text, formatter: v => '¥' + v } },
+      series: [{
+        type: 'scatter',
+        data: points.map(p => [p.date, p.price, p.kind, p.qty]),
+        symbolSize: p => p[1] ? 8 : 8,
+        itemStyle: { color: p => points[p.dataIndex].kind === 'buy' ? th.orange : th.green, opacity: 0.9 },
+      }],
+    });
+    return;
+  }
+
+  // 有行情 → K 线 + 散点叠加
+  // K 线日期映射（用作 X 轴）
+  const kDates = kline.map(k => k.date);
+  const kData = kline.map(k => [k.open, k.close, k.low, k.high]);
+
+  // 把买卖点对齐到 X 轴索引（若当天没有 K 线，找最近的）
+  const dateIndex = new Map(kDates.map((d, i) => [d, i]));
+  function nearestIdx(date) {
+    if (dateIndex.has(date)) return dateIndex.get(date);
+    // 升序里找最接近
+    for (let i = 0; i < kDates.length; i++) {
+      if (kDates[i] >= date) return i;
+    }
+    return kDates.length - 1;
+  }
+
+  const buyScatter = points.filter(p => p.kind === 'buy').map(p => [nearestIdx(p.date), p.price, p.qty, p.date, p.tLike]);
+  const sellScatter = points.filter(p => p.kind === 'sell').map(p => [nearestIdx(p.date), p.price, p.qty, p.date, p.tLike]);
+
+  const c4 = echarts.init(el);
+  _trendCharts.push(c4);
+  c4.setOption({
+    grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
+    legend: { top: 0, right: 8, textStyle: { color: th.text, fontSize: 10 },
+      data: [
+        { name: '加仓/买入', itemStyle: { color: th.orange } },
+        { name: '减仓/卖出', itemStyle: { color: th.green } },
+        { name: '日 K', icon: 'rect', itemStyle: { color: th.accent } },
+      ] },
+    tooltip: { trigger: 'axis', backgroundColor: th.bg, borderColor: th.line, textStyle: { color: th.text1, fontSize: 12 },
+      formatter: params => {
+        const d = kDates[params[0].dataIndex] || params[0].axisValue;
+        let out = `${d}<br/>`;
+        params.forEach(p => {
+          if (p.seriesType === 'candlestick') return;  // K 线下一次显示太长，跳过
+          if (p.seriesType === 'scatter') {
+            const [, price, qty, , tLike] = p.data;
+            out += `${p.marker} ${p.seriesName} ¥${price} × ${qty}股${tLike ? ' (T)' : ''}<br/>`;
+          }
+        });
+        return out;
+      } },
+    xAxis: { type: 'category', data: kDates, boundaryGap: true,
+      axisLine: { lineStyle: { color: th.line } }, axisTick: { show: false },
+      axisLabel: { fontSize: 10, color: th.text, formatter: v => v.slice(5) } },
+    yAxis: { type: 'value', scale: true,
+      splitLine: { lineStyle: { color: th.line } },
+      axisLabel: { fontSize: 10, color: th.text, formatter: v => '¥' + v } },
+    series: [
+      {
+        name: '日 K', type: 'candlestick', data: kData,
+        itemStyle: { color: '#ef5350', color0: '#26a69a', borderColor: '#ef5350', borderColor0: '#26a69a' },
+      },
+      {
+        name: '加仓/买入', type: 'scatter', data: buyScatter,
+        symbolSize: d => d[4] ? Math.min(10, d[2]/200 + 4) : Math.min(16, d[2]/200 + 6),
+        itemStyle: { color: th.orange, opacity: 0.9 },
+      },
+      {
+        name: '减仓/卖出', type: 'scatter', data: sellScatter,
+        symbolSize: d => d[4] ? Math.min(10, d[2]/200 + 4) : Math.min(16, d[2]/200 + 6),
+        itemStyle: { color: th.green, opacity: 0.9 },
+        markLine: { silent: true, symbol: 'none',
+          lineStyle: { color: th.text, type: 'dashed', opacity: 0.5 },
+          data: [{ yAxis: st.avgCost, label: { formatter: `成本 ¥${fmt(st.avgCost)}`, color: th.text, fontSize: 10 } }] }
+      },
+    ],
   });
 }
 
