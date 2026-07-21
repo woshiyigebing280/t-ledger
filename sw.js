@@ -1,4 +1,4 @@
-const CACHE = 't-ledger-v21';
+const CACHE = 't-ledger-v22';
 const ASSETS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', e => {

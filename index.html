@@ -723,6 +723,25 @@ function stockColor(id) {
 function stockInitials(stock) {
   return stock.code ? stock.code.slice(-2) : stock.name.slice(0, 2);
 }
+// 返回这只股票原币盈亏：{amount, cur, sym}
+// A 股：cur='CNY' sym='¥'，港股：'HKD' 'HK$'，美股：'USD' 'US$'
+function stockProfitOriginal(st) {
+  const m = marketOf(st.code);
+  const cur = (m === 'HK') ? 'HKD' : (m === 'US') ? 'USD' : 'CNY';
+  const sym = (m === 'HK') ? 'HK$' : (m === 'US') ? 'US$' : '¥';
+  const amount = (st.trades || [])
+    .filter(t => t.type !== 'buy')
+    .reduce((s, t) => s + (t.profit || 0), 0);
+  return { amount, cur, sym, market: m };
+}
+// 格式化原币副值：A 股返回空串（已经是 ¥），港美股返回 ' ≈ +HK$XX'
+function fmtOrigSub(st) {
+  const r = stockProfitOriginal(st);
+  if (r.market !== 'HK' && r.market !== 'US') return '';
+  const sign = r.amount > 0 ? '+' : r.amount < 0 ? '-' : '';
+  const abs = Math.abs(r.amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return `<span style="opacity:0.5;font-size:0.85em;margin-left:4px;font-weight:400">≈ ${sign}${r.sym}${abs}</span>`;
+}
 
 // ─── Navigation ──────────────────────────────────────────────────────────────
 function showView(id) {
@@ -788,7 +807,7 @@ function renderHome() {
         <div class="card-main">
           <div class="card-row1">
             <span class="card-name">${st.name}${st.code ? ' <span style="font-size:13px;font-weight:400;color:var(--text2)">' + st.code + '</span>' : ''}</span>
-            <span class="card-profit ${pc}">${fmtMoney(profit)}</span>
+            <span class="card-profit ${pc}">${fmtMoney(profit)}${fmtOrigSub(st)}</span>
           </div>
           <div class="card-row2">
             <span class="card-sub">${fmt(st.shares, 0)} 股 · 成本 ¥${fmt(st.avgCost)}</span>
@@ -847,7 +866,7 @@ function renderDetail(stockId) {
           <div class="detail-stat-label">当前成本价</div>
         </div>
         <div class="detail-stat">
-          <div class="detail-stat-val ${pc}">${fmtMoney(profit)}</div>
+          <div class="detail-stat-val ${pc}">${fmtMoney(profit)}${fmtOrigSub(st)}</div>
           <div class="detail-stat-label">累计 T 收益</div>
         </div>
       </div>
