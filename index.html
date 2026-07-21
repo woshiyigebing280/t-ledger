@@ -413,38 +413,8 @@ body {
   font-size: 12px; font-weight: 600; color: var(--text2);
   text-transform: uppercase; letter-spacing: 0.5px;
   padding: 0 16px 10px;
-  display: flex; align-items: center; justify-content: space-between;
 }
-.chart-card-title .enlarge-btn {
-  background: none; border: none; padding: 4px 6px; margin: -4px -6px 0 0;
-  color: var(--text2); opacity: 0.55; cursor: pointer;
-  font-size: 11px; line-height: 1;
-}
-.chart-card-title .enlarge-btn:active { opacity: 1; }
 .chart-box { width: 100%; height: 200px; }
-
-/* 全屏图查看器：竖屏下强制「横向铺满」靠 JS 设宽高 + 绝对定位 */
-.chart-fullscreen {
-  position: fixed; inset: 0; z-index: 1000;
-  background: var(--card);
-  display: none; flex-direction: column;
-}
-.chart-fullscreen.open { display: flex; }
-.chart-fullscreen .fs-hdr {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 16px; border-bottom: 0.5px solid var(--sep);
-  flex-shrink: 0;
-}
-.chart-fullscreen .fs-title { font-size: 14px; font-weight: 600; color: var(--text1); }
-.chart-fullscreen .fs-close {
-  background: var(--bg2); border: none; border-radius: 14px;
-  padding: 4px 12px; font-size: 12px; color: var(--text1); cursor: pointer;
-}
-.chart-fullscreen .fs-box { flex: 1; width: 100%; min-height: 200px; }
-.chart-fullscreen .fs-hint {
-  text-align: center; color: var(--text3); font-size: 11px;
-  padding: 6px; flex-shrink: 0;
-}
 </style>
 </head>
 <body>
@@ -499,16 +469,6 @@ body {
     </div>
     <div class="scroll animate-in">
       <div id="trend-content"></div>
-    </div>
-
-    <!-- 全屏图查看器 -->
-    <div class="chart-fullscreen" id="chart-fullscreen">
-      <div class="fs-hdr">
-        <div class="fs-title" id="fs-title">—</div>
-        <button class="fs-close" onclick="closeChartFullscreen()">关闭</button>
-      </div>
-      <div class="fs-box" id="fs-box"></div>
-      <div class="fs-hint">双指捏合缩放 · 双击放大</div>
     </div>
   </div>
 
@@ -1460,65 +1420,9 @@ document.getElementById('action-sheet').addEventListener('click', e => {
 let _trendCharts = [];          // 按渲染顺序：[cumprofit, cost, winrate, tradepoints]
 let _trendChartIds = [];        // 同位置存 DOM id，便于按 id 查实例
 let _trendRenderToken = 0;      // 防 async 竞态
-let _fsChart = null;
 function clearTrendCharts() {
   _trendCharts.forEach(c => { try { c.dispose(); } catch(e){} });
   _trendCharts = []; _trendChartIds = [];
-}
-function getChartInstanceById(id) {
-  const i = _trendChartIds.indexOf(id);
-  return i >= 0 ? _trendCharts[i] : null;
-}
-// 全屏图查看器：竖屏提醒用户转动，转后自动按横屏铺满
-let _fsSrc = null;       // 原 chart 实例，供重画
-let _onOrientResize = null;
-function drawFullscreen() {
-  if (!_fsSrc) return;
-  if (_fsChart) { try { _fsChart.dispose(); _fsChart = null; } catch(e){} }
-  const opt = JSON.parse(JSON.stringify(_fsSrc.getOption(),
-    (k, v) => typeof v === 'function' ? null : v));
-  _fsChart = echarts.init(document.getElementById('fs-box'));
-  _fsChart.setOption(opt);
-  _fsChart.setOption({ textStyle: { fontSize: 13 } });
-}
-function openChartFullscreen(id, title) {
-  const src = getChartInstanceById(id);
-  if (!src) return;
-  const el = document.getElementById('chart-fullscreen');
-  document.getElementById('fs-title').textContent = title || id;
-  el.classList.add('open');
-  _fsSrc = src;
-  // 提示文案
-  if (window.matchMedia('(orientation: portrait)').matches) {
-    document.getElementById('fs-hint').textContent = '🔁 请将手机横置以便查看';
-  } else {
-    document.getElementById('fs-hint').textContent = '双指捏合缩放';
-  }
-  // 让浏览器先把 .open 的 layout 算出来再 init（否则 fs-box 尺寸可能为 0）
-  requestAnimationFrame(() => requestAnimationFrame(drawFullscreen));
-  // 旋转 → dispose + 重画（resize 在容器剧烈变化时不可靠）
-  _onOrientResize = () => {
-    if (window.matchMedia('(orientation: portrait)').matches) {
-      document.getElementById('fs-hint').textContent = '🔁 请将手机横置以便查看';
-    } else {
-      document.getElementById('fs-hint').textContent = '双指捏合缩放';
-    }
-    drawFullscreen();
-  };
-  window.addEventListener('resize', _onOrientResize);
-  window.addEventListener('orientationchange', _onOrientResize);
-}
-function closeChartFullscreen() {
-  const el = document.getElementById('chart-fullscreen');
-  el.classList.remove('open');
-  if (_onOrientResize) {
-    window.removeEventListener('resize', _onOrientResize);
-    window.removeEventListener('orientationchange', _onOrientResize);
-    _onOrientResize = null;
-  }
-  if (_fsChart) { try { _fsChart.dispose(); } catch(e){} _fsChart = null; }
-  _fsSrc = null;
-  document.getElementById('fs-hint').textContent = '双指捏合缩放';
 }
 function chartTheme() {
   const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -1586,19 +1490,19 @@ function renderTrend(stockId) {
       </div>
     </div>
     <div class="chart-card">
-      <div class="chart-card-title">累计 T 收益 <button class="enlarge-btn" onclick="openChartFullscreen('chart-cumprofit','累计 T 收益')">放大 ⤢</button></div>
+      <div class="chart-card-title">累计 T 收益</div>
       <div class="chart-box" id="chart-cumprofit"></div>
     </div>
     <div class="chart-card">
-      <div class="chart-card-title">成本价走势 <button class="enlarge-btn" onclick="openChartFullscreen('chart-cost','成本价走势')">放大 ⤢</button></div>
+      <div class="chart-card-title">成本价走势</div>
       <div class="chart-box" id="chart-cost"></div>
     </div>
     <div class="chart-card">
-      <div class="chart-card-title">胜率滚动趋势（近10笔） <button class="enlarge-btn" onclick="openChartFullscreen('chart-winrate','胜率滚动趋势')">放大 ⤢</button></div>
+      <div class="chart-card-title">胜率滚动趋势（近10笔）</div>
       <div class="chart-box" id="chart-winrate"></div>
     </div>
     <div class="chart-card">
-      <div class="chart-card-title" id="chart-tradepoints-title">买卖点位 + 行情 <button class="enlarge-btn" onclick="openChartFullscreen('chart-tradepoints','买卖点位 + 行情')">放大 ⤢</button></div>
+      <div class="chart-card-title" id="chart-tradepoints-title">买卖点位 + 行情</div>
       <div class="chart-box" id="chart-tradepoints"></div>
     </div>
     <div style="height:32px"></div>`;
