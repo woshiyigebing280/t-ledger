@@ -54,13 +54,6 @@
 - **编辑面板加「删除该持仓」按钮**（红色，v23）：之前 confirmDeleteStock 函数在但 UI 入口缺失
 - **股票代码支持字母输入**（v23）：iOS 上之前 inputmode="numeric" 导致字母根本进不来
 
-#### 🔧 趋势买卖点位图稳健性
-- **统一时间轴**（v24）：K 线日期 ∪ trade 日期去重升序，trade 永远用自己日期画点，绝不"贴"到不相关的 K 线上
-  - 修复 SPCX 等只有 1 条 K 线时，所有 trade 强行集中在 7/20 错位的 bug
-- **空 trade 时降级显示 K 线**（v26）：不再留白卡位
-- **iOS Safari 没有 NPE 防御**（v28）：tooltip trigger:'axis' 配合 candlestick null 数据时，所有 formatter 入口加 `if (!params || !params.length) return ''` 和 null entry 选取
-- 异常 fallback 时标题暴露具体错误消息方便诊断
-
 #### ⚠️ 接受现实：美股不画 K 线（v29）
 经过全面实测，公开免费 API 对**美股**支持差：
 - 腾讯对 SPCX（SpaceX 2026-06-12 上市）只返回 1 条
