@@ -1796,9 +1796,13 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
   const buyScatter = points.filter(p => p.kind === 'buy').map(p => [xIdx.get(p.date), p.price, p.qty, p.date, p.tLike]);
   const sellScatter = points.filter(p => p.kind === 'sell').map(p => [xIdx.get(p.date), p.price, p.qty, p.date, p.tLike]);
 
-  const c4 = echarts.init(el);
-  _trendCharts.push(c4); _trendChartIds.push('chart-tradepoints');
-  c4.setOption({
+  // 没买卖点 → 也没意义画
+  if (buyScatter.length === 0 && sellScatter.length === 0) {
+    titleEl.textContent = `${st.code || '—'} 近期无买卖点记录`;
+    return;
+  }
+
+  const buildFullOption = () => ({
     grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
     legend: { top: 0, right: 8, textStyle: { color: th.text, fontSize: 10 },
       data: [
@@ -1847,6 +1851,40 @@ async function renderTradePointsChart(st, allTrades, th, myToken, range = 'all')
       },
     ],
   });
+  const buildFallbackOption = () => ({
+    grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
+    tooltip: { trigger: 'item', backgroundColor: th.bg, borderColor: th.line, textStyle: { color: th.text1, fontSize: 12 },
+      formatter: p => `${p.data[3]}<br/>¥${p.data[1]} · ${p.data[4] === 'B' ? '买' : '卖'} · ${p.data[2]}股` },
+    xAxis: { type: 'category', data: xDates,
+      axisLine: { lineStyle: { color: th.line } }, axisTick: { show: false },
+      axisLabel: { fontSize: 10, color: th.text, formatter: v => v.slice(5) } },
+    yAxis: { type: 'value', scale: true,
+      splitLine: { lineStyle: { color: th.line } },
+      axisLabel: { fontSize: 10, color: th.text, formatter: v => '¥' + v } },
+    series: [{
+      type: 'scatter',
+      data: points.map(p => [xIdx.get(p.date), p.price, p.qty, p.date, p.kind === 'buy' ? 'B' : 'S']),
+      symbolSize: 18,
+      itemStyle: { color: p => p.data[4] === 'B' ? th.orange : th.green, opacity: 0.9 },
+      label: { show: true, position: 'inside', formatter: p => p.data[4], color: '#fff', fontWeight: 'bold', fontSize: 11 },
+      markLine: { silent: true, symbol: 'none',
+        lineStyle: { color: th.text, type: 'dashed', opacity: 0.5 },
+        data: [{ yAxis: st.avgCost, label: { formatter: `成本 ¥${fmt(st.avgCost)}`, color: th.text, fontSize: 10 } }] }
+    }],
+  });
+
+  const c4 = echarts.init(el);
+  _trendCharts.push(c4); _trendChartIds.push('chart-tradepoints');
+  try {
+    c4.setOption(buildFullOption());
+  } catch (err) {
+    console.warn('[tradepoints] candlestick + scatter 渲染失败，降级纯散点:', err);
+    try { c4.dispose(); } catch(e){}
+    titleEl.textContent = `买卖点位（${st.code}）（K 线渲染失败，暂只显示点位）`;
+    const c4b = echarts.init(el);
+    _trendCharts.push(c4b); _trendChartIds.push('chart-tradepoints');
+    c4b.setOption(buildFallbackOption());
+  }
 }
 
 if ('serviceWorker' in navigator) {
