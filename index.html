@@ -1040,6 +1040,7 @@ function saveBuy() {
   if (isNaN(price) || price <= 0) return alert('请填写买入价');
   if (isNaN(qty) || qty <= 0) return alert('请填写买入股数');
 
+  ensureBaseline(st);  // 第一次做任何操作时冻结 initial（之后 recompute 永远以此为基准）
   const sharesBefore = st.shares;
   const costBefore = st.avgCost;
   const sharesAfter = st.shares + qty;
@@ -1105,6 +1106,7 @@ async function saveSell() {
   if (isNaN(qty) || qty <= 0) return alert('请填写卖出股数');
   if (qty > st.shares) return alert(`卖出股数(${fmt(qty,0)})超过持仓(${fmt(st.shares,0)})`);
 
+  ensureBaseline(st);
   const sharesBefore = st.shares;
   const costBefore = st.avgCost;
   const r = computeSell(st, price, qty);
@@ -1199,6 +1201,7 @@ async function saveTrade() {
   }
 
   const mk = marketOf(st.code);
+  ensureBaseline(st);
   if (editId) {
     // 编辑：先撤销旧记录影响，再应用新数值（按当前最新汇率重算 CNY）
     const tr = (st.trades || []).find(t => t.id === editId);
@@ -1241,16 +1244,28 @@ function showTradeActions(tradeId) {
   actions.push({ label: `删除此条记录（${tr.date}）`, danger: true, action: () => deleteTrade(currentStockId, tradeId) });
   showActionSheet(actions);
 }
+function ensureBaseline(st) {
+  // 首次创建任何 trade 时，立即把当前 st.shares/avgCost 冻结为不可变 baseline
+  // recomputeStock 永远以此为初始值，不再靠 trade.sharesBefore 反推（容易错）
+  if (!st.initialShares || !st.initialCost) {
+    st.initialShares = st.shares;
+    st.initialCost = st.avgCost;
+  }
+}
 function recomputeStock(st) {
   // 从 trades 完整重放，得到自洽的 shares/avgCost/totalTProfit。
   // 移动加权平均：卖出按均价结转，剩下来的均价不变。
   if (!st.initialShares || !st.initialCost) {
-    if (st.trades && st.trades.length) {
-      const first = st.trades[0];
-      st.initialShares = first.sharesBefore !== undefined ? first.sharesBefore : st.shares;
-      st.initialCost = first.costBefore !== undefined ? first.costBefore : st.avgCost;
+    // 老数据兜底：取最早一笔 buy 的 sharesBefore；若都是sell/t（理论上不可能首笔）则用当前 +
+    const firstBuy = (st.trades || []).find(t => t.type === 'buy' && t.sharesBefore != null);
+    if (firstBuy) {
+      st.initialShares = firstBuy.sharesBefore;
+      st.initialCost = firstBuy.costBefore != null ? firstBuy.costBefore : st.avgCost;
     } else {
-      st.initialShares = st.shares;
+      // 老数据只剩 sell/ T，无法准确反推；用当前 shares 减 sell 净量作为 baseline
+      let netSell = 0;
+      (st.trades || []).forEach(t => { if (t.type === 'sell') netSell += t.qty || 0; });
+      st.initialShares = Math.max(0, (st.shares || 0) + netSell);
       st.initialCost = st.avgCost;
     }
   }
@@ -1928,15 +1943,48 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 // 后台异步迁移老数据（无 fxSnapshot 或有未换算 trade 时触发）；不阻塞首屏渲染
+// 一次性兜底：给所有"有 trade 但缺 initialShares"的老 stock 推 baseline
+function ensureAllBaselines() {
+  (state.stocks || []).forEach(st => {
+    if (st.initialShares && st.initialCost) return;
+    // 找第一笔带 sharesBefore 的 buy；buy 的 sharesBefore = 该 stock 创建时的 shares
+    const fb = (st.trades || []).find(t => t.type === 'buy' && t.sharesBefore != null);
+    if (fb) {
+      st.initialShares = fb.sharesBefore;
+      st.initialCost = fb.costBefore != null ? fb.costBefore : st.avgCost;
+      return;
+    }
+    // 没 buy trade（只有 sell/T） → 用最早 trade 之前推算
+    const first = (st.trades || [])[0];
+    if (first && first.sharesBefore != null) {
+      // 第一笔 trade 之前的状态就是 baseline
+      st.initialShares = first.sharesBefore;
+      st.initialCost = first.costBefore != null ? first.costBefore : st.avgCost;
+      return;
+    }
+    // 完全无信息 → 用当前 shares
+    st.initialShares = st.shares;
+    st.initialCost = st.avgCost;
+  });
+}
+
 async function startupMigrate() {
+  // 兜底 baseline（无论新老数据）—— 保证 recomputeStock 算出来的 shares 正确
+  ensureAllBaselines();
+  // 老数据 / 港美股汇率迁移
   const stocks = state.stocks || [];
   const hasForeign = stocks.some(s => { const m = marketOf(s.code); return m === 'HK' || m === 'US'; });
   const needsMigration = !state.fxSnapshot
     || (hasForeign && !state.fxSnapshot.ts)
     || stocks.some(s => (s.trades || []).some(t => t.profitCNY === undefined && t.type !== 'buy'));
-  if (!needsMigration) return;
-  await migrateLegacyFx();
-  renderHome();  // 迁移完用新值重渲一次
+  if (needsMigration) await migrateLegacyFx();
+  // baseline 都有了 → 重新 recompute 所有 stock，让 shares/totalTProfit 自洽
+  let dirty = false;
+  stocks.forEach(st => {
+    if (st.trades && st.trades.length) { recomputeStock(st); dirty = true; }
+  });
+  if (dirty) save();
+  renderHome();
 }
 startupMigrate();
 renderHome();
