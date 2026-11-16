@@ -34,6 +34,15 @@
 
 ## 📅 更新日志
 
+### 2026-11-16（安全加固，v30 → v31）
+
+#### 🔒 ECharts 本地化，去除 jsdelivr CDN 依赖
+- `index.html` 改为引用仓库内 `./echarts.min.js`（1.0MB），不再从 cdn.jsdelivr.net 加载
+- 动机一（可用性）：jsdelivr 曾在中国大陆发生域名污染，国内手机打开趋势图可能全部加载失败
+- 动机二（完整性）：原先无 SRI 校验，CDN 被投毒时恶意脚本可读取 localStorage 中的全部交易数据；本地文件随仓库走 Git 版本管理，天然防篡改
+- 下载时经 jsdelivr / unpkg / npm 官方源三方 SHA-256 比对一致后入库：`1156429a…3c54d19`
+- `sw.js` 预缓存清单加入 `echarts.min.js`，缓存版本升到 v31，离线场景图表同样可用
+
 ### 2026-07-21（第二轮，v17 → v29）
 
 #### 🆕 汇率换算成一次性快照（v19）
@@ -96,7 +105,7 @@ iOS Safari 上各类旋转/resize 方案都不能稳定自适应方向，按用�
 ## 🛠 技术栈
 
 - 纯 HTML / CSS / 原生 JS，无构建工具
-- [ECharts 5.4.3](https://echarts.apache.org/) 负责所有图表
+- [ECharts 5.4.3](https://echarts.apache.org/) 负责所有图表（**本地化引用** `./echarts.min.js`，三方哈希核验一致，不依赖任何第三方 CDN）
 - [PWA + Service Worker](./sw.js) 网络优先 + 本地缓存兜底，可"添加到主屏幕"作离线 App 用
 - 数据本地存 `localStorage`，**永远不离开你的设备**
 
@@ -113,6 +122,7 @@ iOS Safari 上各类旋转/resize 方案都不能稳定自适应方向，按用�
 ```
 .
 ├── index.html       # 全部 UI 与逻辑（单文件）
+├── echarts.min.js   # ECharts 5.4.3（本地引用，去 CDN 依赖）
 ├── manifest.json    # PWA 配置
 ├── sw.js            # Service Worker
 ├── icon-192.png

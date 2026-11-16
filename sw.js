@@ -1,5 +1,5 @@
-const CACHE = 't-ledger-v30';
-const ASSETS = ['./', './index.html', './manifest.json'];
+const CACHE = 't-ledger-v31';
+const ASSETS = ['./', './index.html', './manifest.json', './echarts.min.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
